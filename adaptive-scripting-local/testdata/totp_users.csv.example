@@ -1,0 +1,6 @@
+username,password,totpSecret
+adaptive_totp_user_1,Test@1234!,REPLACE_WITH_ACTUAL_SECRET
+adaptive_totp_user_2,Test@1234!,REPLACE_WITH_ACTUAL_SECRET
+adaptive_totp_user_3,Test@1234!,REPLACE_WITH_ACTUAL_SECRET
+adaptive_totp_user_4,Test@1234!,REPLACE_WITH_ACTUAL_SECRET
+adaptive_totp_user_5,Test@1234!,REPLACE_WITH_ACTUAL_SECRET

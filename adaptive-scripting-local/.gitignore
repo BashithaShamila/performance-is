@@ -1,0 +1,18 @@
+# Test results (regenerated each run)
+results/
+
+# Generated test data (contains machine-specific TOTP secrets)
+testdata/totp_users.csv
+testdata/role_users.csv
+
+# JMeter logs
+*.log
+
+# Raw JTL result files
+*.jtl
+
+# Temp files from setup scripts
+/tmp/
+
+# macOS
+.DS_Store

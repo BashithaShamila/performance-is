@@ -1,0 +1,814 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<jmeterTestPlan version="1.2" properties="5.0" jmeter="5.5">
+  <hashTree>
+    <TestPlan guiclass="TestPlanGui" testclass="TestPlan"
+              testname="Adaptive Scripting - OIDC Auth Code + TOTP MFA Flow" enabled="true">
+      <stringProp name="TestPlan.comments">
+        Tests OIDC Authorization Code flow where the adaptive script (GraalJS) adds
+        TOTP as a second authentication factor.
+
+        Adaptive script configured on the IS application:
+          var onLoginRequest = function(context) {
+              executeStep(1, {
+                  onSuccess: function(context) {
+                      executeStep(2);
+                  }
+              });
+          };
+        Where step 2 is the TOTP authenticator.
+
+        Flow (IS 7.2.x with TOTP MFA):
+          1.  GET  /oauth2/authorize             - IS redirects to login; extract sessionDataKey
+          2.  POST /commonauth (password)        - Step 1 of adaptive script; IS redirects to TOTP page
+          2c. POST /commonauth (TOTP code)       - Step 2 of adaptive script; Groovy calculates code
+          2b. GET  /t/carbon.super/oauth2/authorize - IS issues auth code; extract code from redirect
+          3.  POST /oauth2/token                 - Exchange code for tokens; assert access_token + id_token
+
+        Prerequisites:
+          1. Run setup/setup_totp_users.sh to create N users and enroll each in TOTP
+             This writes testdata/totp_users.csv (username,password,totpSecret per line)
+          2. Adaptive script configured on the IS application (see above)
+          3. TOTP set as step 2 authenticator in the IS application sign-in method
+
+        Each JMeter thread reads its own row from totp_users.csv so that concurrent
+        threads use different TOTP secrets — required to avoid TOTP replay protection
+        (IS only accepts each 6-digit code once per 30-second window).
+
+        TOTP Replay Guard: IS rejects the same TOTP code used twice in the same
+        30-second window, even across different sessions. The TOTP PreProcessor
+        tracks the last-used time step per thread and sleeps until the next 30s
+        window if needed. This limits throughput to ~1 auth per 30s per user.
+        To increase throughput, create more users (setup_totp_users.sh N).
+
+        Parameters (set in config.properties):
+          host, port, clientId, clientSecret, callbackUrl,
+          concurrency, duration, rampup
+      </stringProp>
+      <boolProp name="TestPlan.functional_mode">false</boolProp>
+      <boolProp name="TestPlan.serialize_threadgroups">false</boolProp>
+      <elementProp name="TestPlan.user_defined_variables" elementType="Arguments"
+                   guiclass="ArgumentsPanel" testclass="Arguments" enabled="true">
+        <collectionProp name="Arguments.arguments"/>
+      </elementProp>
+      <stringProp name="TestPlan.user_define_classpath"></stringProp>
+    </TestPlan>
+    <hashTree>
+
+      <!-- Server Variables -->
+      <Arguments guiclass="ArgumentsPanel" testclass="Arguments"
+                 testname="Server Variables" enabled="true">
+        <collectionProp name="Arguments.arguments">
+          <elementProp name="is_host" elementType="Argument">
+            <stringProp name="Argument.name">is_host</stringProp>
+            <stringProp name="Argument.value">${__P(host,localhost)}</stringProp>
+            <stringProp name="Argument.metadata">=</stringProp>
+          </elementProp>
+          <elementProp name="is_port" elementType="Argument">
+            <stringProp name="Argument.name">is_port</stringProp>
+            <stringProp name="Argument.value">${__P(port,9443)}</stringProp>
+            <stringProp name="Argument.metadata">=</stringProp>
+          </elementProp>
+        </collectionProp>
+      </Arguments>
+      <hashTree/>
+
+      <!-- OAuth App Variables -->
+      <Arguments guiclass="ArgumentsPanel" testclass="Arguments"
+                 testname="OAuth App Variables" enabled="true">
+        <collectionProp name="Arguments.arguments">
+          <elementProp name="clientId" elementType="Argument">
+            <stringProp name="Argument.name">clientId</stringProp>
+            <stringProp name="Argument.value">${__P(clientId,YOUR_CLIENT_ID_HERE)}</stringProp>
+            <stringProp name="Argument.metadata">=</stringProp>
+          </elementProp>
+          <elementProp name="clientSecret" elementType="Argument">
+            <stringProp name="Argument.name">clientSecret</stringProp>
+            <stringProp name="Argument.value">${__P(clientSecret,YOUR_CLIENT_SECRET_HERE)}</stringProp>
+            <stringProp name="Argument.metadata">=</stringProp>
+          </elementProp>
+          <elementProp name="callbackUrl" elementType="Argument">
+            <stringProp name="Argument.name">callbackUrl</stringProp>
+            <stringProp name="Argument.value">${__P(callbackUrl,https://localhost/callback)}</stringProp>
+            <stringProp name="Argument.metadata">=</stringProp>
+          </elementProp>
+        </collectionProp>
+      </Arguments>
+      <hashTree/>
+
+      <!-- Test / Thread Variables -->
+      <Arguments guiclass="ArgumentsPanel" testclass="Arguments"
+                 testname="Test Variables" enabled="true">
+        <collectionProp name="Arguments.arguments">
+          <elementProp name="noOfThreads" elementType="Argument">
+            <stringProp name="Argument.name">noOfThreads</stringProp>
+            <stringProp name="Argument.value">${__P(concurrency,5)}</stringProp>
+            <stringProp name="Argument.metadata">=</stringProp>
+          </elementProp>
+          <elementProp name="timeToRun" elementType="Argument">
+            <stringProp name="Argument.name">timeToRun</stringProp>
+            <stringProp name="Argument.value">${__P(duration,120)}</stringProp>
+            <stringProp name="Argument.metadata">=</stringProp>
+          </elementProp>
+          <elementProp name="rampUpPeriod" elementType="Argument">
+            <stringProp name="Argument.name">rampUpPeriod</stringProp>
+            <stringProp name="Argument.value">${__P(rampup,20)}</stringProp>
+            <stringProp name="Argument.metadata">=</stringProp>
+          </elementProp>
+        </collectionProp>
+      </Arguments>
+      <hashTree/>
+
+      <!-- No CSVDataSet needed: user assignment is done per-thread by a Groovy
+           PreProcessor on Step 1 using ctx.getThreadNum() to index into the CSV.
+           This guarantees Thread N always uses adaptive_totp_user_N, avoiding
+           TOTP replay protection (each user has a unique secret / code). -->
+
+      <!-- HTTP Cookie Manager (IS login flow relies on cookies) -->
+      <CookieManager guiclass="CookiePanel" testclass="CookieManager"
+                     testname="HTTP Cookie Manager" enabled="true">
+        <collectionProp name="CookieManager.cookies"/>
+        <boolProp name="CookieManager.clearEachIteration">true</boolProp>
+        <boolProp name="CookieManager.controlledByThreadGroup">false</boolProp>
+      </CookieManager>
+      <hashTree/>
+
+      <!-- Main Thread Group -->
+      <ThreadGroup guiclass="ThreadGroupGui" testclass="ThreadGroup"
+                   testname="Adaptive Script TOTP Login Flow" enabled="true">
+        <stringProp name="ThreadGroup.on_sample_error">continue</stringProp>
+        <elementProp name="ThreadGroup.main_controller" elementType="LoopController"
+                     guiclass="LoopControlPanel" testclass="LoopController" enabled="true">
+          <boolProp name="LoopController.continue_forever">false</boolProp>
+          <intProp name="LoopController.loops">-1</intProp>
+        </elementProp>
+        <stringProp name="ThreadGroup.num_threads">${noOfThreads}</stringProp>
+        <stringProp name="ThreadGroup.ramp_time">${rampUpPeriod}</stringProp>
+        <boolProp name="ThreadGroup.scheduler">true</boolProp>
+        <stringProp name="ThreadGroup.duration">${timeToRun}</stringProp>
+        <stringProp name="ThreadGroup.delay">0</stringProp>
+        <boolProp name="ThreadGroup.delayedStart">false</boolProp>
+        <boolProp name="ThreadGroup.same_user_on_next_iteration">false</boolProp>
+      </ThreadGroup>
+      <hashTree>
+
+        <!-- STEP 1: GET /oauth2/authorize
+             IS redirects to login page; extract sessionDataKey. -->
+        <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy"
+                          testname="1 GET /oauth2/authorize" enabled="true">
+          <elementProp name="HTTPsampler.Arguments" elementType="Arguments"
+                       guiclass="HTTPArgumentsPanel" testclass="Arguments" enabled="true">
+            <collectionProp name="Arguments.arguments">
+              <elementProp name="client_id" elementType="HTTPArgument">
+                <boolProp name="HTTPArgument.always_encode">false</boolProp>
+                <stringProp name="Argument.value">${clientId}</stringProp>
+                <stringProp name="Argument.metadata">=</stringProp>
+                <boolProp name="HTTPArgument.use_equals">true</boolProp>
+                <stringProp name="Argument.name">client_id</stringProp>
+              </elementProp>
+              <elementProp name="redirect_uri" elementType="HTTPArgument">
+                <boolProp name="HTTPArgument.always_encode">true</boolProp>
+                <stringProp name="Argument.value">${callbackUrl}</stringProp>
+                <stringProp name="Argument.metadata">=</stringProp>
+                <boolProp name="HTTPArgument.use_equals">true</boolProp>
+                <stringProp name="Argument.name">redirect_uri</stringProp>
+              </elementProp>
+              <elementProp name="response_type" elementType="HTTPArgument">
+                <boolProp name="HTTPArgument.always_encode">false</boolProp>
+                <stringProp name="Argument.value">code</stringProp>
+                <stringProp name="Argument.metadata">=</stringProp>
+                <boolProp name="HTTPArgument.use_equals">true</boolProp>
+                <stringProp name="Argument.name">response_type</stringProp>
+              </elementProp>
+              <elementProp name="scope" elementType="HTTPArgument">
+                <boolProp name="HTTPArgument.always_encode">false</boolProp>
+                <stringProp name="Argument.value">openid</stringProp>
+                <stringProp name="Argument.metadata">=</stringProp>
+                <boolProp name="HTTPArgument.use_equals">true</boolProp>
+                <stringProp name="Argument.name">scope</stringProp>
+              </elementProp>
+            </collectionProp>
+          </elementProp>
+          <stringProp name="HTTPSampler.domain">${is_host}</stringProp>
+          <stringProp name="HTTPSampler.port">${is_port}</stringProp>
+          <stringProp name="HTTPSampler.protocol">https</stringProp>
+          <stringProp name="HTTPSampler.path">/oauth2/authorize</stringProp>
+          <stringProp name="HTTPSampler.method">GET</stringProp>
+          <boolProp name="HTTPSampler.follow_redirects">false</boolProp>
+          <boolProp name="HTTPSampler.auto_redirects">false</boolProp>
+          <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+          <boolProp name="HTTPSampler.DO_MULTIPART_POST">false</boolProp>
+          <stringProp name="HTTPSampler.implementation">HttpClient4</stringProp>
+          <stringProp name="HTTPSampler.connect_timeout">10000</stringProp>
+          <stringProp name="HTTPSampler.response_timeout">30000</stringProp>
+        </HTTPSamplerProxy>
+        <hashTree>
+
+          <!-- Load the per-thread user row from totp_users.csv.
+               Thread 0 → adaptive_totp_user_1, Thread 1 → adaptive_totp_user_2, etc.
+               Each thread always uses its own unique user so TOTP codes never collide. -->
+          <JSR223PreProcessor guiclass="TestBeanGUI" testclass="JSR223PreProcessor"
+                              testname="Load Per-Thread User from CSV" enabled="true">
+            <stringProp name="cacheKey">false</stringProp>
+            <stringProp name="filename"></stringProp>
+            <stringProp name="parameters"></stringProp>
+            <stringProp name="scriptLanguage">groovy</stringProp>
+            <stringProp name="script">
+import org.apache.jmeter.services.FileServer
+
+// Resolve CSV path: JMX is in scenarios/, CSV is in ../testdata/
+def jmxDir = FileServer.getFileServer().getBaseDir()
+def csvFile = new File(new File(jmxDir).getParent(), "testdata/totp_users.csv")
+
+if (!csvFile.exists()) {
+    log.error("totp_users.csv not found at: " + csvFile.absolutePath +
+              "\nRun setup/setup_totp_users.sh to generate it.")
+    AssertionResult.setFailure(true)
+    return
+}
+
+// Skip header; index rows 0-based
+def dataLines = csvFile.readLines().drop(1)
+int threadIdx = ctx.getThreadNum() % dataLines.size()
+def parts = dataLines[threadIdx].split(",")
+
+vars.put("testUsername", parts[0].trim())
+vars.put("testPassword", parts[1].trim())
+vars.put("totpSecret",   parts[2].trim())
+log.debug("Thread " + (ctx.getThreadNum() + 1) + " -> " + parts[0].trim())
+            </stringProp>
+          </JSR223PreProcessor>
+          <hashTree/>
+
+          <!-- Assert 302 redirect to login page -->
+          <ResponseAssertion guiclass="AssertionGui" testclass="ResponseAssertion"
+                             testname="Assert 302 Redirect to Login" enabled="true">
+            <collectionProp name="Asserion.test_strings">
+              <stringProp name="103171778">HTTP/1.1 302</stringProp>
+            </collectionProp>
+            <stringProp name="Assertion.test_field">Assertion.response_headers</stringProp>
+            <boolProp name="Assertion.assume_success">false</boolProp>
+            <intProp name="Assertion.test_type">2</intProp>
+            <stringProp name="Assertion.custom_message">
+              Step 1 failed: Expected 302 redirect from /oauth2/authorize.
+              Check that clientId is correct and IS is running.
+            </stringProp>
+          </ResponseAssertion>
+          <hashTree/>
+
+          <!-- Extract sessionDataKey from Location header -->
+          <RegexExtractor guiclass="RegexExtractorGui" testclass="RegexExtractor"
+                          testname="Extract sessionDataKey" enabled="true">
+            <stringProp name="RegexExtractor.useHeaders">true</stringProp>
+            <stringProp name="RegexExtractor.refname">sessionDataKey</stringProp>
+            <stringProp name="RegexExtractor.regex">sessionDataKey=([^&amp;\s"]+)</stringProp>
+            <stringProp name="RegexExtractor.template">$1$</stringProp>
+            <stringProp name="RegexExtractor.default">SESSION_DATA_KEY_NOT_FOUND</stringProp>
+            <stringProp name="RegexExtractor.match_number">1</stringProp>
+          </RegexExtractor>
+          <hashTree/>
+
+          <!-- Fail early if sessionDataKey not found -->
+          <JSR223Assertion guiclass="TestBeanGUI" testclass="JSR223Assertion"
+                           testname="Assert sessionDataKey Extracted" enabled="true">
+            <stringProp name="cacheKey">true</stringProp>
+            <stringProp name="filename"></stringProp>
+            <stringProp name="parameters"></stringProp>
+            <stringProp name="scriptLanguage">groovy</stringProp>
+            <stringProp name="script">
+def key = vars.get("sessionDataKey")
+if (key == null || key == "SESSION_DATA_KEY_NOT_FOUND") {
+    AssertionResult.setFailure(true)
+    AssertionResult.setFailureMessage(
+        "sessionDataKey not found in Location header. " +
+        "Check clientId and IS application configuration."
+    )
+}
+            </stringProp>
+          </JSR223Assertion>
+          <hashTree/>
+        </hashTree>
+
+        <!-- STEP 2: POST /commonauth (Submit Password — Adaptive Script Step 1)
+             GraalJS adaptive script executes step 1 (BasicAuthenticator).
+             IS then starts step 2 of the adaptive script and redirects to the TOTP page.
+             We extract the new sessionDataKey from that redirect (totpSessionKey). -->
+        <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy"
+                          testname="2 POST /commonauth (Submit Password)" enabled="true">
+          <elementProp name="HTTPsampler.Arguments" elementType="Arguments"
+                       guiclass="HTTPArgumentsPanel" testclass="Arguments" enabled="true">
+            <collectionProp name="Arguments.arguments">
+              <elementProp name="sessionDataKey" elementType="HTTPArgument">
+                <boolProp name="HTTPArgument.always_encode">true</boolProp>
+                <stringProp name="Argument.value">${sessionDataKey}</stringProp>
+                <stringProp name="Argument.metadata">=</stringProp>
+                <boolProp name="HTTPArgument.use_equals">true</boolProp>
+                <stringProp name="Argument.name">sessionDataKey</stringProp>
+              </elementProp>
+              <elementProp name="username" elementType="HTTPArgument">
+                <boolProp name="HTTPArgument.always_encode">true</boolProp>
+                <stringProp name="Argument.value">${testUsername}</stringProp>
+                <stringProp name="Argument.metadata">=</stringProp>
+                <boolProp name="HTTPArgument.use_equals">true</boolProp>
+                <stringProp name="Argument.name">username</stringProp>
+              </elementProp>
+              <elementProp name="password" elementType="HTTPArgument">
+                <boolProp name="HTTPArgument.always_encode">true</boolProp>
+                <stringProp name="Argument.value">${testPassword}</stringProp>
+                <stringProp name="Argument.metadata">=</stringProp>
+                <boolProp name="HTTPArgument.use_equals">true</boolProp>
+                <stringProp name="Argument.name">password</stringProp>
+              </elementProp>
+            </collectionProp>
+          </elementProp>
+          <stringProp name="HTTPSampler.domain">${is_host}</stringProp>
+          <stringProp name="HTTPSampler.port">${is_port}</stringProp>
+          <stringProp name="HTTPSampler.protocol">https</stringProp>
+          <stringProp name="HTTPSampler.path">/commonauth</stringProp>
+          <stringProp name="HTTPSampler.method">POST</stringProp>
+          <boolProp name="HTTPSampler.follow_redirects">false</boolProp>
+          <boolProp name="HTTPSampler.auto_redirects">false</boolProp>
+          <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+          <boolProp name="HTTPSampler.DO_MULTIPART_POST">false</boolProp>
+          <stringProp name="HTTPSampler.implementation">HttpClient4</stringProp>
+          <stringProp name="HTTPSampler.connect_timeout">10000</stringProp>
+          <stringProp name="HTTPSampler.response_timeout">30000</stringProp>
+          <stringProp name="TestPlan.comments">
+            ADAPTIVE SCRIPT STEP 1 runs here (GraalJS inside IS).
+            After password auth, IS starts step 2 and redirects to the TOTP authenticator page.
+            Location: /authenticationendpoint/totp.do?sessionDataKey=TOTP_KEY
+          </stringProp>
+        </HTTPSamplerProxy>
+        <hashTree>
+          <!-- Assert 302 redirect to TOTP page -->
+          <ResponseAssertion guiclass="AssertionGui" testclass="ResponseAssertion"
+                             testname="Assert 302 Redirect to TOTP Page" enabled="true">
+            <collectionProp name="Asserion.test_strings">
+              <stringProp name="103171778">HTTP/1.1 302</stringProp>
+            </collectionProp>
+            <stringProp name="Assertion.test_field">Assertion.response_headers</stringProp>
+            <boolProp name="Assertion.assume_success">false</boolProp>
+            <intProp name="Assertion.test_type">2</intProp>
+            <stringProp name="Assertion.custom_message">
+              Step 2 failed: Expected 302 redirect from /commonauth after password.
+              Possible causes: wrong credentials, adaptive script denied access.
+            </stringProp>
+          </ResponseAssertion>
+          <hashTree/>
+
+          <!-- Extract the TOTP-step sessionDataKey from the redirect to the TOTP page -->
+          <RegexExtractor guiclass="RegexExtractorGui" testclass="RegexExtractor"
+                          testname="Extract TOTP SessionDataKey" enabled="true">
+            <stringProp name="RegexExtractor.useHeaders">true</stringProp>
+            <stringProp name="RegexExtractor.refname">totpSessionKey</stringProp>
+            <stringProp name="RegexExtractor.regex">sessionDataKey=([^&amp;\s"]+)</stringProp>
+            <stringProp name="RegexExtractor.template">$1$</stringProp>
+            <stringProp name="RegexExtractor.default">TOTP_KEY_NOT_FOUND</stringProp>
+            <stringProp name="RegexExtractor.match_number">1</stringProp>
+          </RegexExtractor>
+          <hashTree/>
+
+          <!-- Fail early if TOTP sessionDataKey not found -->
+          <JSR223Assertion guiclass="TestBeanGUI" testclass="JSR223Assertion"
+                           testname="Assert TOTP SessionDataKey Extracted" enabled="true">
+            <stringProp name="cacheKey">true</stringProp>
+            <stringProp name="filename"></stringProp>
+            <stringProp name="parameters"></stringProp>
+            <stringProp name="scriptLanguage">groovy</stringProp>
+            <stringProp name="script">
+def key = vars.get("totpSessionKey")
+if (key == null || key == "TOTP_KEY_NOT_FOUND") {
+    AssertionResult.setFailure(true)
+    AssertionResult.setFailureMessage(
+        "TOTP sessionDataKey not found after /commonauth (password step).\n" +
+        "Possible causes:\n" +
+        "  1. Adaptive script did not add a second step - verify script is configured\n" +
+        "  2. Wrong credentials\n" +
+        "  3. TOTP not configured as step 2 in the IS application sign-in method"
+    )
+}
+            </stringProp>
+          </JSR223Assertion>
+          <hashTree/>
+        </hashTree>
+
+        <!-- STEP 2c: POST /commonauth (Submit TOTP Code — Adaptive Script Step 2)
+             GraalJS adaptive script executes step 2 (TOTP authenticator).
+             TOTP code is calculated by Groovy from the secret in config.properties.
+             IS then redirects to /t/carbon.super/oauth2/authorize with postAuthSessionKey. -->
+        <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy"
+                          testname="2c POST /commonauth (Submit TOTP Code)" enabled="true">
+          <elementProp name="HTTPsampler.Arguments" elementType="Arguments"
+                       guiclass="HTTPArgumentsPanel" testclass="Arguments" enabled="true">
+            <collectionProp name="Arguments.arguments">
+              <elementProp name="sessionDataKey" elementType="HTTPArgument">
+                <boolProp name="HTTPArgument.always_encode">true</boolProp>
+                <stringProp name="Argument.value">${totpSessionKey}</stringProp>
+                <stringProp name="Argument.metadata">=</stringProp>
+                <boolProp name="HTTPArgument.use_equals">true</boolProp>
+                <stringProp name="Argument.name">sessionDataKey</stringProp>
+              </elementProp>
+              <elementProp name="token" elementType="HTTPArgument">
+                <boolProp name="HTTPArgument.always_encode">false</boolProp>
+                <stringProp name="Argument.value">${totpCode}</stringProp>
+                <stringProp name="Argument.metadata">=</stringProp>
+                <boolProp name="HTTPArgument.use_equals">true</boolProp>
+                <stringProp name="Argument.name">token</stringProp>
+              </elementProp>
+            </collectionProp>
+          </elementProp>
+          <stringProp name="HTTPSampler.domain">${is_host}</stringProp>
+          <stringProp name="HTTPSampler.port">${is_port}</stringProp>
+          <stringProp name="HTTPSampler.protocol">https</stringProp>
+          <stringProp name="HTTPSampler.path">/commonauth</stringProp>
+          <stringProp name="HTTPSampler.method">POST</stringProp>
+          <boolProp name="HTTPSampler.follow_redirects">false</boolProp>
+          <boolProp name="HTTPSampler.auto_redirects">false</boolProp>
+          <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+          <boolProp name="HTTPSampler.DO_MULTIPART_POST">false</boolProp>
+          <stringProp name="HTTPSampler.implementation">HttpClient4</stringProp>
+          <stringProp name="HTTPSampler.connect_timeout">10000</stringProp>
+          <stringProp name="HTTPSampler.response_timeout">30000</stringProp>
+          <stringProp name="TestPlan.comments">
+            ADAPTIVE SCRIPT STEP 2 runs here (GraalJS inside IS).
+            TOTP code is computed by Groovy PreProcessor below from totpSecret.
+            IS redirects to /t/carbon.super/oauth2/authorize?sessionDataKey=POST_AUTH_KEY
+          </stringProp>
+        </HTTPSamplerProxy>
+        <hashTree>
+
+          <!-- Calculate TOTP code BEFORE the request fires -->
+          <JSR223PreProcessor guiclass="TestBeanGUI" testclass="JSR223PreProcessor"
+                              testname="Calculate TOTP Code" enabled="true">
+            <stringProp name="cacheKey">true</stringProp>
+            <stringProp name="filename"></stringProp>
+            <stringProp name="parameters"></stringProp>
+            <stringProp name="scriptLanguage">groovy</stringProp>
+            <stringProp name="script">
+import javax.crypto.Mac
+import javax.crypto.spec.SecretKeySpec
+import java.nio.ByteBuffer
+
+// --- Base32 decode ---
+def base32Decode(String encoded) {
+    def alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567"
+    encoded = encoded.toUpperCase().replaceAll("[= \\-]", "")
+    def bits = new StringBuilder()
+    encoded.each { c ->
+        int idx = alphabet.indexOf((int) c.charAt(0))
+        if (idx >= 0) {
+            bits.append(String.format("%5s", Integer.toBinaryString(idx)).replace(' ', '0'))
+        }
+    }
+    def byteList = []
+    for (int i = 0; i + 8 &lt;= bits.length(); i += 8) {
+        byteList &lt;&lt; ((int) Integer.parseInt(bits.substring(i, i + 8), 2)).byteValue()
+    }
+    return byteList as byte[]
+}
+
+// --- Read secret ---
+def secret = vars.get("totpSecret")
+if (secret == null || secret.trim().isEmpty()) {
+    log.error("totpSecret is not set. Cannot calculate TOTP.")
+    vars.put("totpCode", "000000")
+    return
+}
+
+// --- TOTP Replay Protection ---
+// IS rejects the same TOTP code used twice in the same 30-second window.
+// Track the last-used time step per thread and sleep until the next window
+// if we would generate the same code.
+long nowMs = System.currentTimeMillis()
+long currentTimeStep = nowMs / 1000L / 30L
+
+String lastStepKey = "lastTotpTimeStep"
+String lastStepStr = vars.get(lastStepKey)
+if (lastStepStr != null) {
+    long lastStep = Long.parseLong(lastStepStr)
+    if (currentTimeStep == lastStep) {
+        // Same 30-second window — sleep until the next one
+        long nextWindowMs = (currentTimeStep + 1) * 30L * 1000L
+        long sleepMs = nextWindowMs - nowMs + 100  // +100ms safety margin
+        if (sleepMs > 0) {
+            log.info("TOTP replay guard: sleeping " + sleepMs + "ms until next 30s window")
+            Thread.sleep(sleepMs)
+        }
+        currentTimeStep = System.currentTimeMillis() / 1000L / 30L
+    }
+}
+vars.put(lastStepKey, String.valueOf(currentTimeStep))
+
+// --- Compute TOTP (RFC 6238 / HMAC-SHA1) ---
+byte[] key = base32Decode(secret.trim())
+byte[] msg = ByteBuffer.allocate(8).putLong(currentTimeStep).array()
+
+Mac mac = Mac.getInstance("HmacSHA1")
+mac.init(new SecretKeySpec(key, "HmacSHA1"))
+byte[] hash = mac.doFinal(msg)
+
+int offset = hash[hash.length - 1] &amp; 0x0f
+int b0 = hash[offset]     &amp; 0x7f
+int b1 = hash[offset + 1] &amp; 0xff
+int b2 = hash[offset + 2] &amp; 0xff
+int b3 = hash[offset + 3] &amp; 0xff
+// Use multiplication to avoid bit-shift operators in XML
+int otp = (b0 * 16777216) + (b1 * 65536) + (b2 * 256) + b3
+otp = otp % 1000000
+
+vars.put("totpCode", String.format("%06d", otp))
+log.debug("TOTP code calculated for time step " + currentTimeStep)
+            </stringProp>
+          </JSR223PreProcessor>
+          <hashTree/>
+
+          <!-- Assert 302 redirect to post-auth step -->
+          <ResponseAssertion guiclass="AssertionGui" testclass="ResponseAssertion"
+                             testname="Assert 302 Redirect from TOTP commonauth" enabled="true">
+            <collectionProp name="Asserion.test_strings">
+              <stringProp name="103171778">HTTP/1.1 302</stringProp>
+            </collectionProp>
+            <stringProp name="Assertion.test_field">Assertion.response_headers</stringProp>
+            <boolProp name="Assertion.assume_success">false</boolProp>
+            <intProp name="Assertion.test_type">2</intProp>
+            <stringProp name="Assertion.custom_message">
+              Step 2c failed: Expected 302 redirect after TOTP submission.
+              Possible causes: wrong TOTP code, TOTP secret mismatch, or clock skew.
+              Check that totpSecret in config.properties matches the enrolled secret.
+            </stringProp>
+          </ResponseAssertion>
+          <hashTree/>
+
+          <!-- Extract postAuthSessionKey from the redirect to /t/carbon.super/oauth2/authorize -->
+          <RegexExtractor guiclass="RegexExtractorGui" testclass="RegexExtractor"
+                          testname="Extract Post-Auth SessionDataKey" enabled="true">
+            <stringProp name="RegexExtractor.useHeaders">true</stringProp>
+            <stringProp name="RegexExtractor.refname">postAuthSessionKey</stringProp>
+            <stringProp name="RegexExtractor.regex">sessionDataKey=([^&amp;\s"]+)</stringProp>
+            <stringProp name="RegexExtractor.template">$1$</stringProp>
+            <stringProp name="RegexExtractor.default">POST_AUTH_KEY_NOT_FOUND</stringProp>
+            <stringProp name="RegexExtractor.match_number">1</stringProp>
+          </RegexExtractor>
+          <hashTree/>
+
+          <!-- Fail early if TOTP was rejected (redirect back to totp.do with authFailure) -->
+          <JSR223Assertion guiclass="TestBeanGUI" testclass="JSR223Assertion"
+                           testname="Assert TOTP Accepted (not authFailure)" enabled="true">
+            <stringProp name="cacheKey">true</stringProp>
+            <stringProp name="filename"></stringProp>
+            <stringProp name="parameters"></stringProp>
+            <stringProp name="scriptLanguage">groovy</stringProp>
+            <stringProp name="script">
+// Check the Location header for authFailure — indicates TOTP code was rejected
+def headers = prev.getResponseHeaders()
+if (headers != null &amp;&amp; headers.contains("authFailure=true")) {
+    AssertionResult.setFailure(true)
+    AssertionResult.setFailureMessage(
+        "TOTP code was rejected (authFailure=true in redirect).\n" +
+        "This usually means the same TOTP code was replayed within the same 30s window."
+    )
+    return
+}
+
+def key = vars.get("postAuthSessionKey")
+if (key == null || key == "POST_AUTH_KEY_NOT_FOUND") {
+    AssertionResult.setFailure(true)
+    AssertionResult.setFailureMessage(
+        "Post-auth sessionDataKey not found after TOTP submission.\n" +
+        "Possible causes:\n" +
+        "  1. TOTP code was invalid - check totpSecret\n" +
+        "  2. Clock skew - system clock must be accurate within 30 seconds\n" +
+        "  3. Adaptive script denied access after TOTP"
+    )
+}
+            </stringProp>
+          </JSR223Assertion>
+          <hashTree/>
+        </hashTree>
+
+        <!-- STEP 2b: GET /t/carbon.super/oauth2/authorize (IS internal re-auth)
+             Same as in Adaptive_Script_Login_Flow.jmx — IS issues the auth code here. -->
+        <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy"
+                          testname="2b GET /oauth2/authorize (Post-Auth)" enabled="true">
+          <elementProp name="HTTPsampler.Arguments" elementType="Arguments"
+                       guiclass="HTTPArgumentsPanel" testclass="Arguments" enabled="true">
+            <collectionProp name="Arguments.arguments">
+              <elementProp name="sessionDataKey" elementType="HTTPArgument">
+                <boolProp name="HTTPArgument.always_encode">true</boolProp>
+                <stringProp name="Argument.value">${postAuthSessionKey}</stringProp>
+                <stringProp name="Argument.metadata">=</stringProp>
+                <boolProp name="HTTPArgument.use_equals">true</boolProp>
+                <stringProp name="Argument.name">sessionDataKey</stringProp>
+              </elementProp>
+            </collectionProp>
+          </elementProp>
+          <stringProp name="HTTPSampler.domain">${is_host}</stringProp>
+          <stringProp name="HTTPSampler.port">${is_port}</stringProp>
+          <stringProp name="HTTPSampler.protocol">https</stringProp>
+          <stringProp name="HTTPSampler.path">/t/carbon.super/oauth2/authorize</stringProp>
+          <stringProp name="HTTPSampler.method">GET</stringProp>
+          <boolProp name="HTTPSampler.follow_redirects">false</boolProp>
+          <boolProp name="HTTPSampler.auto_redirects">false</boolProp>
+          <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+          <boolProp name="HTTPSampler.DO_MULTIPART_POST">false</boolProp>
+          <stringProp name="HTTPSampler.implementation">HttpClient4</stringProp>
+          <stringProp name="HTTPSampler.connect_timeout">10000</stringProp>
+          <stringProp name="HTTPSampler.response_timeout">30000</stringProp>
+        </HTTPSamplerProxy>
+        <hashTree>
+          <!-- Assert 302 redirect to callback with auth code -->
+          <ResponseAssertion guiclass="AssertionGui" testclass="ResponseAssertion"
+                             testname="Assert 302 Redirect to Callback" enabled="true">
+            <collectionProp name="Asserion.test_strings">
+              <stringProp name="103171778">HTTP/1.1 302</stringProp>
+            </collectionProp>
+            <stringProp name="Assertion.test_field">Assertion.response_headers</stringProp>
+            <boolProp name="Assertion.assume_success">false</boolProp>
+            <intProp name="Assertion.test_type">2</intProp>
+            <stringProp name="Assertion.custom_message">
+              Step 2b failed: Expected 302 redirect to callback from post-auth /oauth2/authorize.
+            </stringProp>
+          </ResponseAssertion>
+          <hashTree/>
+
+          <!-- Extract auth code from Location header (callbackUrl?code=AUTH_CODE) -->
+          <RegexExtractor guiclass="RegexExtractorGui" testclass="RegexExtractor"
+                          testname="Extract Auth Code" enabled="true">
+            <stringProp name="RegexExtractor.useHeaders">true</stringProp>
+            <stringProp name="RegexExtractor.refname">authCode</stringProp>
+            <stringProp name="RegexExtractor.regex">code=([^&amp;\s"]+)</stringProp>
+            <stringProp name="RegexExtractor.template">$1$</stringProp>
+            <stringProp name="RegexExtractor.default">AUTH_CODE_NOT_FOUND</stringProp>
+            <stringProp name="RegexExtractor.match_number">1</stringProp>
+          </RegexExtractor>
+          <hashTree/>
+
+          <!-- Fail if auth code not found -->
+          <JSR223Assertion guiclass="TestBeanGUI" testclass="JSR223Assertion"
+                           testname="Assert Auth Code Extracted" enabled="true">
+            <stringProp name="cacheKey">true</stringProp>
+            <stringProp name="filename"></stringProp>
+            <stringProp name="parameters"></stringProp>
+            <stringProp name="scriptLanguage">groovy</stringProp>
+            <stringProp name="script">
+def code = vars.get("authCode")
+if (code == null || code == "AUTH_CODE_NOT_FOUND") {
+    AssertionResult.setFailure(true)
+    AssertionResult.setFailureMessage(
+        "Auth code not found in redirect Location header after post-auth /oauth2/authorize.\n" +
+        "Possible causes:\n" +
+        "  1. Adaptive script denied access after TOTP\n" +
+        "  2. Consent page shown - disable consent for the IS application"
+    )
+}
+            </stringProp>
+          </JSR223Assertion>
+          <hashTree/>
+        </hashTree>
+
+        <!-- STEP 3: POST /oauth2/token - Exchange auth code for tokens -->
+        <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy"
+                          testname="3 POST /oauth2/token (Exchange Code)" enabled="true">
+          <elementProp name="HTTPsampler.Arguments" elementType="Arguments"
+                       guiclass="HTTPArgumentsPanel" testclass="Arguments" enabled="true">
+            <collectionProp name="Arguments.arguments">
+              <elementProp name="grant_type" elementType="HTTPArgument">
+                <boolProp name="HTTPArgument.always_encode">false</boolProp>
+                <stringProp name="Argument.value">authorization_code</stringProp>
+                <stringProp name="Argument.metadata">=</stringProp>
+                <boolProp name="HTTPArgument.use_equals">true</boolProp>
+                <stringProp name="Argument.name">grant_type</stringProp>
+              </elementProp>
+              <elementProp name="code" elementType="HTTPArgument">
+                <boolProp name="HTTPArgument.always_encode">true</boolProp>
+                <stringProp name="Argument.value">${authCode}</stringProp>
+                <stringProp name="Argument.metadata">=</stringProp>
+                <boolProp name="HTTPArgument.use_equals">true</boolProp>
+                <stringProp name="Argument.name">code</stringProp>
+              </elementProp>
+              <elementProp name="redirect_uri" elementType="HTTPArgument">
+                <boolProp name="HTTPArgument.always_encode">true</boolProp>
+                <stringProp name="Argument.value">${callbackUrl}</stringProp>
+                <stringProp name="Argument.metadata">=</stringProp>
+                <boolProp name="HTTPArgument.use_equals">true</boolProp>
+                <stringProp name="Argument.name">redirect_uri</stringProp>
+              </elementProp>
+              <elementProp name="client_id" elementType="HTTPArgument">
+                <boolProp name="HTTPArgument.always_encode">false</boolProp>
+                <stringProp name="Argument.value">${clientId}</stringProp>
+                <stringProp name="Argument.metadata">=</stringProp>
+                <boolProp name="HTTPArgument.use_equals">true</boolProp>
+                <stringProp name="Argument.name">client_id</stringProp>
+              </elementProp>
+              <elementProp name="client_secret" elementType="HTTPArgument">
+                <boolProp name="HTTPArgument.always_encode">false</boolProp>
+                <stringProp name="Argument.value">${clientSecret}</stringProp>
+                <stringProp name="Argument.metadata">=</stringProp>
+                <boolProp name="HTTPArgument.use_equals">true</boolProp>
+                <stringProp name="Argument.name">client_secret</stringProp>
+              </elementProp>
+            </collectionProp>
+          </elementProp>
+          <stringProp name="HTTPSampler.domain">${is_host}</stringProp>
+          <stringProp name="HTTPSampler.port">${is_port}</stringProp>
+          <stringProp name="HTTPSampler.protocol">https</stringProp>
+          <stringProp name="HTTPSampler.path">/oauth2/token</stringProp>
+          <stringProp name="HTTPSampler.method">POST</stringProp>
+          <boolProp name="HTTPSampler.follow_redirects">true</boolProp>
+          <boolProp name="HTTPSampler.auto_redirects">false</boolProp>
+          <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+          <boolProp name="HTTPSampler.DO_MULTIPART_POST">false</boolProp>
+          <stringProp name="HTTPSampler.implementation">HttpClient4</stringProp>
+          <stringProp name="HTTPSampler.connect_timeout">10000</stringProp>
+          <stringProp name="HTTPSampler.response_timeout">30000</stringProp>
+        </HTTPSamplerProxy>
+        <hashTree>
+          <!-- Assert 200 OK -->
+          <ResponseAssertion guiclass="AssertionGui" testclass="ResponseAssertion"
+                             testname="Assert 200 Token Response" enabled="true">
+            <collectionProp name="Asserion.test_strings">
+              <stringProp name="103171775">HTTP/1.1 200</stringProp>
+            </collectionProp>
+            <stringProp name="Assertion.test_field">Assertion.response_headers</stringProp>
+            <boolProp name="Assertion.assume_success">false</boolProp>
+            <intProp name="Assertion.test_type">2</intProp>
+            <stringProp name="Assertion.custom_message">
+              Step 3 failed: /oauth2/token did not return 200.
+              The auth code may be invalid or expired.
+            </stringProp>
+          </ResponseAssertion>
+          <hashTree/>
+
+          <!-- Assert access_token present -->
+          <ResponseAssertion guiclass="AssertionGui" testclass="ResponseAssertion"
+                             testname="Assert access_token Present" enabled="true">
+            <collectionProp name="Asserion.test_strings">
+              <stringProp name="417462488">&quot;access_token&quot;</stringProp>
+            </collectionProp>
+            <stringProp name="Assertion.test_field">Assertion.response_data</stringProp>
+            <boolProp name="Assertion.assume_success">true</boolProp>
+            <intProp name="Assertion.test_type">2</intProp>
+            <stringProp name="Assertion.custom_message">
+              access_token not found in token response body.
+            </stringProp>
+          </ResponseAssertion>
+          <hashTree/>
+
+          <!-- Assert id_token present (OIDC) -->
+          <ResponseAssertion guiclass="AssertionGui" testclass="ResponseAssertion"
+                             testname="Assert id_token Present" enabled="true">
+            <collectionProp name="Asserion.test_strings">
+              <stringProp name="731531919">&quot;id_token&quot;</stringProp>
+            </collectionProp>
+            <stringProp name="Assertion.test_field">Assertion.response_data</stringProp>
+            <boolProp name="Assertion.assume_success">true</boolProp>
+            <intProp name="Assertion.test_type">2</intProp>
+            <stringProp name="Assertion.custom_message">
+              id_token not found in token response. Ensure scope includes openid.
+            </stringProp>
+          </ResponseAssertion>
+          <hashTree/>
+        </hashTree>
+
+      </hashTree>
+
+      <!-- View Results Tree (disabled by default, enable in JMeter GUI for debugging) -->
+      <ResultCollector guiclass="ViewResultsFullVisualizer" testclass="ResultCollector"
+                       testname="View Results Tree" enabled="false">
+        <boolProp name="ResultCollector.error_logging">false</boolProp>
+        <objProp>
+          <name>saveConfig</name>
+          <value class="SampleSaveConfiguration">
+            <time>true</time>
+            <latency>true</latency>
+            <timestamp>true</timestamp>
+            <success>true</success>
+            <label>true</label>
+            <code>true</code>
+            <message>true</message>
+            <threadName>true</threadName>
+            <dataType>true</dataType>
+            <encoding>false</encoding>
+            <assertions>true</assertions>
+            <subresults>true</subresults>
+            <responseData>true</responseData>
+            <samplerData>false</samplerData>
+            <xml>false</xml>
+            <fieldNames>true</fieldNames>
+            <responseHeaders>true</responseHeaders>
+            <requestHeaders>true</requestHeaders>
+            <responseDataOnError>true</responseDataOnError>
+            <saveAssertionResultsFailureMessage>true</saveAssertionResultsFailureMessage>
+            <bytes>true</bytes>
+            <sentBytes>true</sentBytes>
+            <threadCounts>true</threadCounts>
+            <idleTime>true</idleTime>
+            <connectTime>true</connectTime>
+          </value>
+        </objProp>
+        <stringProp name="filename"></stringProp>
+      </ResultCollector>
+      <hashTree/>
+
+    </hashTree>
+  </hashTree>
+</jmeterTestPlan>
