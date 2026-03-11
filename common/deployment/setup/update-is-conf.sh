@@ -118,10 +118,13 @@ function usage() {
     echo "-t: Keystore type."
     echo "-m: Database type."
     echo "-c: Case insensitivity of the username and attributes."
+    echo "-g: Start external GraalJS microservice for adaptive scripting (true/false)."
     echo ""
 }
 
-while getopts "n:w:i:j:k:r:s:t:m:c:h" opts; do
+start_graaljs_service=false
+
+while getopts "n:w:i:j:k:r:s:t:m:c:g:h" opts; do
     case $opts in
     n)
         no_of_nodes=${OPTARG}
@@ -152,6 +155,9 @@ while getopts "n:w:i:j:k:r:s:t:m:c:h" opts; do
         ;;
     c)
         is_case_insensitive_username_and_attributes=${OPTARG}
+        ;;
+    g)
+        start_graaljs_service=${OPTARG}
         ;;
     h)
         usage
@@ -276,3 +282,25 @@ fi
 
 ./wso2is/bin/wso2server.sh start
 sleep 60s
+
+# Start external GraalJS sidecar if enabled (for adaptive scripting with updated pack)
+# Communication: IS → Sidecar on localhost:50051 (gRPC), Sidecar → IS callbacks on localhost:50052
+if [[ "$start_graaljs_service" == "true" ]]; then
+    echo ""
+    echo "Starting external GraalJS sidecar (gRPC on port 50051)..."
+    echo "-------------------------------------------"
+    if ls graaljs-sidecar-*.jar 1>/dev/null 2>&1; then
+        nohup java -jar graaljs-sidecar-*.jar grpc 50051 > /home/ubuntu/graaljs-microservice.log 2>&1 &
+        GRAALJS_PID=$!
+        echo "GraalJS sidecar started with PID: $GRAALJS_PID"
+        echo "$GRAALJS_PID" > /home/ubuntu/graaljs-microservice.pid
+        sleep 10s
+        if kill -0 "$GRAALJS_PID" 2>/dev/null; then
+            echo "GraalJS sidecar is running on localhost:50051."
+        else
+            echo "WARNING: GraalJS sidecar failed to start. Check /home/ubuntu/graaljs-microservice.log"
+        fi
+    else
+        echo "WARNING: GraalJS sidecar JAR not found. Skipping."
+    fi
+fi

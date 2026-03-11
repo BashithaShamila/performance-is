@@ -49,6 +49,8 @@ function after_execute_test_scenario() {
     download_file "$wso2is_host_alias" $is_home/repository/logs/wso2carbon.log "$wso2is_host_alias.log"
     download_file "$wso2is_host_alias" $is_home/repository/logs/gc.log $wso2is_host_alias"_gc.log"
     download_file "$wso2is_host_alias" $is_home/repository/logs/heap-dump.hprof "$wso2is_host_alias-heap-dump.hprof"
+    # Download GraalJS microservice log if it exists
+    download_file "$wso2is_host_alias" /home/ubuntu/graaljs-microservice.log "graaljs-microservice.log" 2>/dev/null || true
 }
 
 test_scenarios

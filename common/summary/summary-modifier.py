@@ -109,7 +109,12 @@ scenarios = {
     "App Native Authentication": [
         "1 Send request to authorize end point",
         "2 Submit username and password",
-        "3 Get tokens"]}
+        "3 Get tokens"],
+    "Adaptive Script Role-Based Login": [
+        "1 Send request to authorize end point",
+        "2 Common Auth Login HTTP Request",
+        "3 Get Authorization Code",
+        "4 Get access token"]}
 
 scenarios_critical_requests = scenarios.copy()
 

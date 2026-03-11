@@ -265,6 +265,12 @@ elif [ "$concurrency" == "1000-3000" ]; then
 elif [ "$concurrency" == "50-50" ]; then
     echo "Running tests for concurrency level 50"
     default_concurrent_users="50"
+elif [ "$concurrency" == "200-200" ]; then
+    echo "Running tests for concurrency level 200"
+    default_concurrent_users="200"
+elif [ "$concurrency" == "100-500" ]; then
+    echo "Running tests for concurrency level 100-500"
+    default_concurrent_users="100 200 300 500"
 elif [ "$concurrency" == "50-1000" ]; then
     echo "Running tests for concurrency level 50-1000"
     default_concurrent_users="50 100 150 300 500 750 1000"
@@ -505,6 +511,29 @@ function run_test_data_scripts() {
     run_jmeter_scripts "${scripts[@]}"
 }
 
+function run_adaptive_script_setup() {
+
+    echo "Running adaptive script app setup"
+    echo "=========================================================================================="
+    local setup_script="/home/ubuntu/workspace/jmeter/setup/setup-adaptive-script-app.sh"
+
+    if [[ ! -f "$setup_script" ]]; then
+        echo "WARNING: Adaptive script setup not found at $setup_script. Skipping."
+        return 0
+    fi
+
+    # Employee users: reuse existing isTestUser_ users (created by TestData_SCIM2_Add_User.jmx).
+    # Manager/admin users: create a small number for role infrastructure.
+    # Only employees can complete the login flow (managers/admins need TOTP which isn't enrolled).
+    # The adaptive script's hasAnyOfTheRolesV2() check runs for ALL users regardless of role count.
+    local employee_count=${ADAPTIVE_EMPLOYEE_COUNT:-$userCount}
+    local manager_count=${ADAPTIVE_MANAGER_COUNT:-10}
+    local admin_count=${ADAPTIVE_ADMIN_COUNT:-10}
+
+    chmod +x "$setup_script"
+    "$setup_script" -h "$lb_host" -p "$is_port" -u "$employee_count" -m "$manager_count" -a "$admin_count"
+}
+
 function run_test_data_scripts_with_user_snapshot() {
 
     echo "Running test data setup scripts with snapshot"
@@ -525,7 +554,22 @@ function run_tenant_test_data_scripts() {
 
 function initiailize_test() {
 
-    # Filter scenarios
+    # Filter by mode first (broad filter)
+    if [[ ! -z $mode ]]; then
+        declare -n scenario
+        for scenario in ${!test_scenario@}; do
+            scenario[skip]=true
+            modeValues=${scenario[modes]}
+            for i in $modeValues; do
+                if [ "$i" == $mode ]; then
+                    scenario[skip]=false
+                    break
+                fi
+            done
+        done
+    fi
+
+    # Then refine with include/exclude (narrow filter)
     if [[ ${#include_scenario_names[@]} -gt 0 ]] || [[ ${#exclude_scenario_names[@]} -gt 0 ]]; then
         declare -n scenario
         for scenario in ${!test_scenario@}; do
@@ -538,20 +582,6 @@ function initiailize_test() {
             for name in "${exclude_scenario_names[@]}"; do
                 if [[ ${scenario[name]} =~ $name ]]; then
                     scenario[skip]=true
-                fi
-            done
-        done
-    fi
-    
-    if [[ ! -z $mode ]]; then
-        declare -n scenario
-        for scenario in ${!test_scenario@}; do
-            scenario[skip]=true
-            modeValues=${scenario[modes]}
-            for i in $modeValues; do
-                if [ "$i" == $mode ]; then
-                    scenario[skip]=false
-                    break
                 fi
             done
         done
@@ -622,6 +652,15 @@ function initiailize_test() {
             run_test_data_scripts
             #run_tenant_test_data_scripts
         fi
+
+        # Setup adaptive script app if any adaptive scenario is enabled
+        declare -n _as_scenario
+        for _as_scenario in ${!test_scenario@}; do
+            if [[ ${_as_scenario[skip]} != true ]] && [[ ${_as_scenario[name]} == *"Adaptive_Script"* ]]; then
+                run_adaptive_script_setup
+                break
+            fi
+        done
     fi
 }
 

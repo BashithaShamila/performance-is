@@ -43,6 +43,8 @@ is_case_insensitive_username_and_attributes="false"
 enable_high_concurrency=false
 use_db_snapshot=false
 db_snapshot_id=""
+enable_graaljs_sidecar=true
+graaljs_sidecar_url="${GRAALJS_SIDECAR_URL:-https://github.com/BashithaShamila/external-graaljs/releases/download/v1.0.0-SNAPSHOT/graaljs-sidecar-1.0.0-SNAPSHOT.jar}"
 
 results_dir="$PWD/results-$timestamp"
 default_minimum_stack_creation_wait_time=10
@@ -78,6 +80,7 @@ function usage() {
     echo "-g: Number of IS nodes."
     echo "-m: Database type. Default: $db_type."
     echo "-l: Case insensitivity of the username and attributes. Default: $is_case_insensitive_username_and_attributes."
+    echo "-x: URL of GraalJS sidecar JAR for adaptive scripting (GitHub release or S3 URL; enables sidecar on IS EC2)."
     echo "-h: Display this help and exit."
     echo ""
 }
@@ -457,6 +460,15 @@ scp_bastion_cmd "$is_setup" "/home/ubuntu/wso2is.zip"
 scp_bastion_cmd "$key_file" "/home/ubuntu/private_key.pem"
 scp_r_bastion_cmd "$results_dir/lib/*" "/home/ubuntu/"
 
+# Download and copy GraalJS sidecar JAR if enabled
+if [[ "$enable_graaljs_sidecar" == "true" ]]; then
+    echo ""
+    echo "Downloading GraalJS sidecar JAR from $graaljs_sidecar_url..."
+    echo "============================================"
+    wget -q -O /tmp/graaljs-sidecar.jar "$graaljs_sidecar_url"
+    scp_bastion_cmd "/tmp/graaljs-sidecar.jar" "/home/ubuntu/graaljs-sidecar-1.0.0.jar"
+fi
+
 echo ""
 echo "Running Bastion Node setup script..."
 echo "============================================"
@@ -485,27 +497,27 @@ execute_db_command "$session_rds_host" "/home/ubuntu/workspace/setup/resources/$
 echo ""
 echo "Running IS node 1 setup script..."
 echo "============================================"
-ssh_bastion_cmd "./setup/setup-is.sh -n $no_of_nodes -m $db_type -c $is_case_insensitive_username_and_attributes -a wso2is1 -t $keystore_type -i $wso2_is_1_ip -w $wso2_is_2_ip -j $wso2_is_3_ip -k $wso2_is_4_ip -r $rds_host -s $session_rds_host"
+ssh_bastion_cmd "./setup/setup-is.sh -n $no_of_nodes -m $db_type -c $is_case_insensitive_username_and_attributes -a wso2is1 -t $keystore_type -i $wso2_is_1_ip -w $wso2_is_2_ip -j $wso2_is_3_ip -k $wso2_is_4_ip -r $rds_host -s $session_rds_host -g $enable_graaljs_sidecar"
 
 if [[ $no_of_nodes -gt 1 ]]; then
     echo ""
     echo "Running IS node 2 setup script..."
     echo "============================================"
-    ssh_bastion_cmd "./setup/setup-is.sh -n $no_of_nodes -m $db_type -c $is_case_insensitive_username_and_attributes -a wso2is2 -t $keystore_type -i $wso2_is_2_ip -w $wso2_is_1_ip -j $wso2_is_3_ip -k $wso2_is_4_ip -r $rds_host -s $session_rds_host"
+    ssh_bastion_cmd "./setup/setup-is.sh -n $no_of_nodes -m $db_type -c $is_case_insensitive_username_and_attributes -a wso2is2 -t $keystore_type -i $wso2_is_2_ip -w $wso2_is_1_ip -j $wso2_is_3_ip -k $wso2_is_4_ip -r $rds_host -s $session_rds_host -g $enable_graaljs_sidecar"
 fi
 
 if [[ $no_of_nodes -gt 2 ]]; then
     echo ""
     echo "Running IS node 3 setup script..."
     echo "============================================"
-    ssh_bastion_cmd "./setup/setup-is.sh -n $no_of_nodes -m $db_type -c $is_case_insensitive_username_and_attributes -a wso2is3 -t $keystore_type -i $wso2_is_3_ip -w $wso2_is_2_ip -j $wso2_is_1_ip -k $wso2_is_4_ip -r $rds_host -s $session_rds_host"
+    ssh_bastion_cmd "./setup/setup-is.sh -n $no_of_nodes -m $db_type -c $is_case_insensitive_username_and_attributes -a wso2is3 -t $keystore_type -i $wso2_is_3_ip -w $wso2_is_2_ip -j $wso2_is_1_ip -k $wso2_is_4_ip -r $rds_host -s $session_rds_host -g $enable_graaljs_sidecar"
 fi
 
 if [[ $no_of_nodes -gt 3 ]]; then
     echo ""
     echo "Running IS node 4 setup script..."
     echo "============================================"
-    ssh_bastion_cmd "./setup/setup-is.sh -n $no_of_nodes -m $db_type -c $is_case_insensitive_username_and_attributes -a wso2is4 -t $keystore_type -i $wso2_is_4_ip -w $wso2_is_3_ip -j $wso2_is_2_ip -k $wso2_is_1_ip -r $rds_host -s $session_rds_host"
+    ssh_bastion_cmd "./setup/setup-is.sh -n $no_of_nodes -m $db_type -c $is_case_insensitive_username_and_attributes -a wso2is4 -t $keystore_type -i $wso2_is_4_ip -w $wso2_is_3_ip -j $wso2_is_2_ip -k $wso2_is_1_ip -r $rds_host -s $session_rds_host -g $enable_graaljs_sidecar"
 fi
 
 echo ""

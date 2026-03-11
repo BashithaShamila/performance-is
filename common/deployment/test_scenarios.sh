@@ -170,3 +170,12 @@ declare -A test_scenario16=(
     [skip]=false
     [modes]="FULL PUBLISH"
 )
+declare -A test_scenario17=(
+    [name]="17-Adaptive_Script_RoleBased_Login"
+    [display_name]="Adaptive Script Role-Based Login"
+    [description]="OIDC Auth Code flow with adaptive script using hasAnyOfTheRolesV2() for role-based step-up authentication."
+    [jmx]="adaptive/Adaptive_Script_RoleBased_Flow.jmx"
+    [tenantMode]=false
+    [skip]=false
+    [modes]="FULL PUBLISH"
+)

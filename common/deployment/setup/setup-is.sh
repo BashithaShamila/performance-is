@@ -35,10 +35,13 @@ function usage() {
     echo "-t: Keystore type."
     echo "-m: Database type."
     echo "-c: Case insensitivity of the username and attributes."
+    echo "-g: Start external GraalJS microservice for adaptive scripting (true/false)."
     echo ""
 }
 
-while getopts "a:n:w:i:j:k:r:s:t:m:c:h" opts; do
+start_graaljs_service=false
+
+while getopts "a:n:w:i:j:k:r:s:t:m:c:g:h" opts; do
     case $opts in
     a)
         is_host_alias=${OPTARG}
@@ -72,6 +75,9 @@ while getopts "a:n:w:i:j:k:r:s:t:m:c:h" opts; do
         ;;
     c)
         is_case_insensitive_username_and_attributes=${OPTARG}
+        ;;
+    g)
+        start_graaljs_service=${OPTARG}
         ;;
     h)
         usage
@@ -120,6 +126,14 @@ sudo -u ubuntu scp mysql-connector-j-*.jar "$is_host_alias":/home/ubuntu/
 sudo -u ubuntu scp mssql-jdbc-*.jar "$is_host_alias":/home/ubuntu/
 sudo -u ubuntu scp postgresql-*.jar "$is_host_alias":/home/ubuntu/
 
+# Copy GraalJS sidecar JAR if present (for adaptive scripting with updated pack)
+if [[ "$start_graaljs_service" == "true" ]] && ls graaljs-sidecar-*.jar 1>/dev/null 2>&1; then
+    echo ""
+    echo "Copying GraalJS sidecar JAR..."
+    echo "-------------------------------------------"
+    sudo -u ubuntu scp graaljs-sidecar-*.jar "$is_host_alias":/home/ubuntu/
+fi
+
 sudo -u ubuntu ssh "$is_host_alias" mkdir sar setup
 sudo -u ubuntu scp workspace/setup/setup-common.sh "$is_host_alias":/home/ubuntu/setup/
 sudo -u ubuntu scp workspace/sar/install-sar.sh "$is_host_alias":/home/ubuntu/sar/
@@ -130,16 +144,16 @@ setup_is_node_command=""
 
 if [[ $no_of_nodes -eq 1 ]]; then
     setup_is_node_command="ssh -i ~/private_key.pem -o "StrictHostKeyChecking=no" -t ubuntu@$wso2_is_1_ip \
-      ./update-is-conf.sh -n $no_of_nodes -c $is_case_insensitive_username_and_attributes -r $db_instance_ip -m $db_type -t $keystore_type -s $session_db_instance_ip"
+      ./update-is-conf.sh -n $no_of_nodes -c $is_case_insensitive_username_and_attributes -r $db_instance_ip -m $db_type -t $keystore_type -s $session_db_instance_ip -g $start_graaljs_service"
 elif [[ $no_of_nodes -eq 2 ]]; then
     setup_is_node_command="ssh -i ~/private_key.pem -o "StrictHostKeyChecking=no" -t ubuntu@$wso2_is_1_ip \
-      ./update-is-conf.sh -n $no_of_nodes -c $is_case_insensitive_username_and_attributes -r $db_instance_ip -m $db_type -t $keystore_type -s $session_db_instance_ip -w $wso2_is_1_ip -i $wso2_is_2_ip"
+      ./update-is-conf.sh -n $no_of_nodes -c $is_case_insensitive_username_and_attributes -r $db_instance_ip -m $db_type -t $keystore_type -s $session_db_instance_ip -w $wso2_is_1_ip -i $wso2_is_2_ip -g $start_graaljs_service"
 elif [[ $no_of_nodes -eq 3 ]]; then
     setup_is_node_command="ssh -i ~/private_key.pem -o "StrictHostKeyChecking=no" -t ubuntu@$wso2_is_1_ip \
-      ./update-is-conf.sh -n $no_of_nodes -c $is_case_insensitive_username_and_attributes -r $db_instance_ip -m $db_type -t $keystore_type -s $session_db_instance_ip -w $wso2_is_1_ip -i $wso2_is_2_ip -j $wso2_is_3_ip"
+      ./update-is-conf.sh -n $no_of_nodes -c $is_case_insensitive_username_and_attributes -r $db_instance_ip -m $db_type -t $keystore_type -s $session_db_instance_ip -w $wso2_is_1_ip -i $wso2_is_2_ip -j $wso2_is_3_ip -g $start_graaljs_service"
 elif [[ $no_of_nodes -eq 4 ]]; then
     setup_is_node_command="ssh -i ~/private_key.pem -o "StrictHostKeyChecking=no" -t ubuntu@$wso2_is_1_ip \
-      ./update-is-conf.sh -n $no_of_nodes -c $is_case_insensitive_username_and_attributes -r $db_instance_ip -m $db_type -t $keystore_type -s $session_db_instance_ip -w $wso2_is_1_ip -i $wso2_is_2_ip -j $wso2_is_3_ip -k $wso2_is_4_ip"
+      ./update-is-conf.sh -n $no_of_nodes -c $is_case_insensitive_username_and_attributes -r $db_instance_ip -m $db_type -t $keystore_type -s $session_db_instance_ip -w $wso2_is_1_ip -i $wso2_is_2_ip -j $wso2_is_3_ip -k $wso2_is_4_ip -g $start_graaljs_service"
 else
     echo "Invalid value for no_of_nodes. Please provide a valid number."
     exit 1
