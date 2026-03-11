@@ -513,25 +513,56 @@ function run_test_data_scripts() {
 
 function run_adaptive_script_setup() {
 
-    echo "Running adaptive script app setup"
+    echo ""
+    echo "=========================================================================================="
+    echo "  Adaptive Script App Setup"
     echo "=========================================================================================="
     local setup_script="/home/ubuntu/workspace/jmeter/setup/setup-adaptive-script-app.sh"
 
     if [[ ! -f "$setup_script" ]]; then
-        echo "WARNING: Adaptive script setup not found at $setup_script. Skipping."
-        return 0
+        echo "  ERROR: Setup script not found at $setup_script"
+        echo "  Expected files in setup dir:"
+        ls -la /home/ubuntu/workspace/jmeter/setup/ 2>/dev/null || echo "  (directory not found)"
+        return 1
     fi
 
-    # Employee users: reuse existing isTestUser_ users (created by TestData_SCIM2_Add_User.jmx).
-    # Manager/admin users: create a small number for role infrastructure.
-    # Only employees can complete the login flow (managers/admins need TOTP which isn't enrolled).
-    # The adaptive script's hasAnyOfTheRolesV2() check runs for ALL users regardless of role count.
     local employee_count=${ADAPTIVE_EMPLOYEE_COUNT:-$userCount}
     local manager_count=${ADAPTIVE_MANAGER_COUNT:-10}
     local admin_count=${ADAPTIVE_ADMIN_COUNT:-10}
 
+    echo "  Script:    $setup_script"
+    echo "  IS host:   $lb_host"
+    echo "  IS port:   $is_port"
+    echo "  Employees: $employee_count (existing isTestUser_ users)"
+    echo "  Managers:  $manager_count (new dedicated users)"
+    echo "  Admins:    $admin_count (new dedicated users)"
+    echo "  Command:   $setup_script -h $lb_host -p $is_port -u $employee_count -m $manager_count -a $admin_count"
+    echo "=========================================================================================="
+
     chmod +x "$setup_script"
     "$setup_script" -h "$lb_host" -p "$is_port" -u "$employee_count" -m "$manager_count" -a "$admin_count"
+    local exit_code=$?
+
+    if [[ $exit_code -ne 0 ]]; then
+        echo ""
+        echo "  ERROR: Adaptive setup script failed with exit code $exit_code"
+        echo "  Check the output above for API errors."
+    else
+        echo ""
+        echo "  Adaptive setup completed successfully."
+        echo "  Credentials: /home/ubuntu/adaptive_app_creds.csv"
+        echo "  CSV:         /home/ubuntu/testdata/role_users.csv"
+        # Show first few lines of generated files
+        echo ""
+        echo "  --- adaptive_app_creds.csv ---"
+        head -2 /home/ubuntu/adaptive_app_creds.csv 2>/dev/null || echo "  (file not found)"
+        echo ""
+        echo "  --- role_users.csv (first 5 lines) ---"
+        head -5 /home/ubuntu/testdata/role_users.csv 2>/dev/null || echo "  (file not found)"
+        echo "  ... ($(wc -l < /home/ubuntu/testdata/role_users.csv 2>/dev/null || echo 0) total lines)"
+    fi
+
+    return $exit_code
 }
 
 function run_test_data_scripts_with_user_snapshot() {
@@ -555,7 +586,17 @@ function run_tenant_test_data_scripts() {
 function initiailize_test() {
 
     # Filter by mode first (broad filter)
+    echo ""
+    echo "=========================================================================================="
+    echo "  Scenario Filtering"
+    echo "=========================================================================================="
+    echo "  Mode: ${mode:-<not set>}"
+    echo "  Include patterns: ${include_scenario_names[*]:-<none>}"
+    echo "  Exclude patterns: ${exclude_scenario_names[*]:-<none>}"
+    echo ""
+
     if [[ ! -z $mode ]]; then
+        echo "--- Applying mode filter: $mode ---"
         declare -n scenario
         for scenario in ${!test_scenario@}; do
             scenario[skip]=true
@@ -566,26 +607,54 @@ function initiailize_test() {
                     break
                 fi
             done
+            echo "  ${scenario[name]} | modes=[${scenario[modes]}] | skip=${scenario[skip]}"
         done
     fi
 
     # Then refine with include/exclude (narrow filter)
     if [[ ${#include_scenario_names[@]} -gt 0 ]] || [[ ${#exclude_scenario_names[@]} -gt 0 ]]; then
+        echo ""
+        echo "--- Applying include/exclude filter ---"
         declare -n scenario
         for scenario in ${!test_scenario@}; do
+            local scenario_name="${scenario[name]}"
+            local prev_skip="${scenario[skip]}"
             scenario[skip]=true
-            for name in "${include_scenario_names[@]}"; do
-                if [[ ${scenario[name]} =~ $name ]]; then
+            for include_pattern in "${include_scenario_names[@]}"; do
+                if [[ $scenario_name =~ $include_pattern ]]; then
                     scenario[skip]=false
+                    echo "  MATCH: '$scenario_name' =~ '$include_pattern' -> skip=false"
                 fi
             done
-            for name in "${exclude_scenario_names[@]}"; do
-                if [[ ${scenario[name]} =~ $name ]]; then
+            for exclude_pattern in "${exclude_scenario_names[@]}"; do
+                if [[ $scenario_name =~ $exclude_pattern ]]; then
                     scenario[skip]=true
+                    echo "  EXCLUDED: '$scenario_name' =~ '$exclude_pattern' -> skip=true"
                 fi
             done
+            if [[ "${scenario[skip]}" == "true" ]] && [[ "$prev_skip" == "false" ]]; then
+                echo "  FILTERED OUT: '$scenario_name' (was enabled by mode, no include match)"
+            fi
         done
     fi
+
+    # Log final scenario selection
+    echo ""
+    echo "--- Final scenario selection ---"
+    declare -n scenario
+    local enabled_count=0
+    for scenario in ${!test_scenario@}; do
+        if [[ ${scenario[skip]} != true ]]; then
+            echo "  ENABLED: ${scenario[name]} (jmx=${scenario[jmx]})"
+            enabled_count=$((enabled_count + 1))
+        fi
+    done
+    if [[ $enabled_count -eq 0 ]]; then
+        echo "  WARNING: No scenarios enabled! Check mode/include/exclude filters."
+    else
+        echo "  Total enabled: $enabled_count"
+    fi
+    echo "=========================================================================================="
 
     echo ""
     echo "Saving test metadata..."
@@ -654,13 +723,21 @@ function initiailize_test() {
         fi
 
         # Setup adaptive script app if any adaptive scenario is enabled
+        local _adaptive_found=false
         declare -n _as_scenario
         for _as_scenario in ${!test_scenario@}; do
             if [[ ${_as_scenario[skip]} != true ]] && [[ ${_as_scenario[name]} == *"Adaptive_Script"* ]]; then
+                echo ""
+                echo "Adaptive scenario detected: ${_as_scenario[name]} — running adaptive setup..."
+                _adaptive_found=true
                 run_adaptive_script_setup
                 break
             fi
         done
+        if [[ "$_adaptive_found" == "false" ]]; then
+            echo ""
+            echo "No adaptive scenario enabled — skipping adaptive setup."
+        fi
     fi
 }
 
