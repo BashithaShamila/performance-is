@@ -527,8 +527,8 @@ function run_adaptive_script_setup() {
     fi
 
     local employee_count=${ADAPTIVE_EMPLOYEE_COUNT:-$userCount}
-    local manager_count=${ADAPTIVE_MANAGER_COUNT:-10}
-    local admin_count=${ADAPTIVE_ADMIN_COUNT:-10}
+    local manager_count=${ADAPTIVE_MANAGER_COUNT:-0}
+    local admin_count=${ADAPTIVE_ADMIN_COUNT:-0}
 
     echo "  Script:    $setup_script"
     echo "  IS host:   $lb_host"
@@ -712,31 +712,47 @@ function initiailize_test() {
         cp "$0" results
         mv test-metadata.json results/
 
-        if [ $mode == "B2B" ]; then
-            userCount=100
-            run_b2b_test_data_scripts
-        elif [ $use_db_snapshot == "true" ]; then
-            run_test_data_scripts_with_user_snapshot
-        else
-            run_test_data_scripts
-            #run_tenant_test_data_scripts
-        fi
-
-        # Setup adaptive script app if any adaptive scenario is enabled
+        # Check which scenarios are enabled
         local _adaptive_found=false
+        local _non_adaptive_found=false
         declare -n _as_scenario
         for _as_scenario in ${!test_scenario@}; do
-            if [[ ${_as_scenario[skip]} != true ]] && [[ ${_as_scenario[name]} == *"Adaptive_Script"* ]]; then
-                echo ""
-                echo "Adaptive scenario detected: ${_as_scenario[name]} — running adaptive setup..."
-                _adaptive_found=true
-                run_adaptive_script_setup
-                break
+            if [[ ${_as_scenario[skip]} != true ]]; then
+                if [[ ${_as_scenario[name]} == *"Adaptive_Script"* ]]; then
+                    _adaptive_found=true
+                else
+                    _non_adaptive_found=true
+                fi
             fi
         done
-        if [[ "$_adaptive_found" == "false" ]]; then
+
+        if [ "$_adaptive_found" = true ] && [ "$_non_adaptive_found" = false ]; then
+            # Only adaptive scenario — minimal setup: just create users + adaptive app
             echo ""
-            echo "No adaptive scenario enabled — skipping adaptive setup."
+            echo "Only adaptive scenario enabled — running minimal setup (users + adaptive app only)."
+            echo "=========================================================================================="
+            declare -a scripts=("TestData_SCIM2_Add_User.jmx")
+            declare -ag additional_jmeter_params=()
+            run_jmeter_scripts "${scripts[@]}"
+            run_adaptive_script_setup
+        else
+            # Standard setup for non-adaptive scenarios
+            if [ $mode == "B2B" ]; then
+                userCount=100
+                run_b2b_test_data_scripts
+            elif [ $use_db_snapshot == "true" ]; then
+                run_test_data_scripts_with_user_snapshot
+            else
+                run_test_data_scripts
+                #run_tenant_test_data_scripts
+            fi
+
+            # Also run adaptive setup if adaptive scenario is enabled alongside others
+            if [ "$_adaptive_found" = true ]; then
+                echo ""
+                echo "Adaptive scenario detected — running adaptive setup..."
+                run_adaptive_script_setup
+            fi
         fi
     fi
 }
