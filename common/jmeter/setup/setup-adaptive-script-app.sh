@@ -90,6 +90,25 @@ mkdir -p "$(dirname "$CREDS_FILE")"
 mkdir -p "$CSV_DIR"
 
 # ============================================================
+# Pre-flight: Verify IS is reachable
+# ============================================================
+echo ""
+echo "Pre-flight: Checking IS connectivity at $IS_BASE ..."
+HEALTH_RESP=$(curl -s -o /dev/null -w "%{http_code}" $CURL_SSL --connect-timeout 10 --max-time 15 "${IS_BASE}/api/server/v1/applications?limit=1" -H "Authorization: Basic $ADMIN_CRED" 2>/dev/null)
+if [ "$HEALTH_RESP" = "000" ]; then
+    echo "  ERROR: Cannot connect to IS at $IS_BASE (connection refused/timeout)."
+    echo "  Check that IS is running and the load balancer (nginx) is configured."
+    exit 1
+elif [ "$HEALTH_RESP" = "401" ] || [ "$HEALTH_RESP" = "403" ]; then
+    echo "  ERROR: IS returned HTTP $HEALTH_RESP — check admin credentials (ADMIN_CRED)."
+    exit 1
+elif [ "$HEALTH_RESP" != "200" ]; then
+    echo "  WARNING: IS returned HTTP $HEALTH_RESP (expected 200). Continuing anyway..."
+else
+    echo "  IS is reachable (HTTP $HEALTH_RESP)."
+fi
+
+# ============================================================
 # Step 1: Create OAuth Application
 # ============================================================
 echo ""
