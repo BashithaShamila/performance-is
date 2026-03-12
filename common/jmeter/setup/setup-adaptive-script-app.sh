@@ -1,4 +1,4 @@
-#!/bin/bash -e
+#!/bin/bash
 # ============================================================
 # Setup: Create Adaptive Script App with Role-Based Users
 # ============================================================
@@ -31,6 +31,8 @@ USER_PASSWORD="Password_1"
 USERNAME_PREFIX="isTestUser_"
 APP_NAME="AdaptiveScriptPerfTestApp"
 CALLBACK_URL="https://localhost/callback"
+CLIENT_ID_VALUE="adaptiveScriptPerfTestKey"
+CLIENT_SECRET_VALUE="adaptiveScriptPerfTestSecret"
 CREDS_FILE="/home/ubuntu/adaptive_app_creds.csv"
 CSV_DIR="/home/ubuntu/testdata"
 CSV_FILE="$CSV_DIR/role_users.csv"
@@ -109,76 +111,11 @@ else
 fi
 
 # ============================================================
-# Step 1: Create OAuth Application
+# Step 1: Load Adaptive Script
 # ============================================================
 echo ""
-echo "Step 1: Creating OAuth application: $APP_NAME ..."
+echo "Step 1: Loading adaptive script ..."
 
-# Check if app already exists
-EXISTING_APP=$(curl -s $CURL_SSL \
-    "${IS_BASE}/api/server/v1/applications?filter=name+eq+${APP_NAME}" \
-    -H "Authorization: Basic $ADMIN_CRED" | \
-    python3 -c "
-import sys, json
-d = json.load(sys.stdin)
-apps = d.get('applications', [])
-print(apps[0]['id'] if apps else '')
-" 2>/dev/null)
-
-if [ -n "$EXISTING_APP" ]; then
-    APP_ID="$EXISTING_APP"
-    echo "  App already exists: $APP_ID"
-else
-    APP_ID=$(curl -s $CURL_SSL -X POST "${IS_BASE}/api/server/v1/applications" \
-        -H "Authorization: Basic $ADMIN_CRED" \
-        -H "Content-Type: application/json" \
-        -d "{
-            \"name\": \"$APP_NAME\",
-            \"description\": \"Performance test app for adaptive script testing\",
-            \"inboundProtocolConfiguration\": {
-                \"oidc\": {
-                    \"grantTypes\": [\"authorization_code\"],
-                    \"callbackURLs\": [\"$CALLBACK_URL\"],
-                    \"publicClient\": false,
-                    \"pkce\": {\"mandatory\": false, \"supportPlainTransformAlgorithm\": true}
-                }
-            },
-            \"claimConfiguration\": {
-                \"dialect\": \"LOCAL\",
-                \"requestedClaims\": []
-            }
-        }" | \
-        python3 -c "import sys,json; print(json.load(sys.stdin).get('id',''))" 2>/dev/null)
-    echo "  App created: $APP_ID"
-fi
-
-if [ -z "$APP_ID" ]; then
-    echo "ERROR: Could not create/find application."
-    exit 1
-fi
-
-# Get OIDC credentials
-OIDC_CONFIG=$(curl -s $CURL_SSL \
-    "${IS_BASE}/api/server/v1/applications/${APP_ID}/inbound-protocols/oidc" \
-    -H "Authorization: Basic $ADMIN_CRED")
-CLIENT_ID=$(echo "$OIDC_CONFIG" | python3 -c "import sys,json; print(json.load(sys.stdin)['clientId'])" 2>/dev/null)
-CLIENT_SECRET=$(echo "$OIDC_CONFIG" | python3 -c "import sys,json; print(json.load(sys.stdin)['clientSecret'])" 2>/dev/null)
-
-echo "  Client ID: $CLIENT_ID"
-echo "  Client Secret: $CLIENT_SECRET"
-
-# Save credentials
-echo "clientId,clientSecret,callbackUrl,appId" > "$CREDS_FILE"
-echo "${CLIENT_ID},${CLIENT_SECRET},${CALLBACK_URL},${APP_ID}" >> "$CREDS_FILE"
-echo "  Saved to $CREDS_FILE"
-
-# ============================================================
-# Step 2: Configure Adaptive Script Authentication Sequence
-# ============================================================
-echo ""
-echo "Step 2: Configuring adaptive script authentication sequence ..."
-
-# Load adaptive script from external file (easy to swap/edit)
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ADAPTIVE_SCRIPT_FILE="${ADAPTIVE_SCRIPT_FILE:-$SCRIPT_DIR/adaptive-script.js}"
 
@@ -196,32 +133,186 @@ ADAPTIVE_SCRIPT=$(python3 -c "
 import json, sys
 with open(sys.argv[1]) as f:
     content = f.read().strip()
-# json.dumps produces a JSON-safe escaped string (with quotes)
-# Strip the outer quotes since we embed it inside our own JSON string
 print(json.dumps(content)[1:-1])
 " "$ADAPTIVE_SCRIPT_FILE")
 
-curl -s $CURL_SSL -X PATCH "${IS_BASE}/api/server/v1/applications/${APP_ID}" \
+if [ -z "$ADAPTIVE_SCRIPT" ]; then
+    echo "  ERROR: Failed to load/escape adaptive script"
+    exit 1
+fi
+echo "  Adaptive script loaded and escaped for JSON"
+
+# ============================================================
+# Step 2: Create OAuth Application (with auth sequence inline)
+# ============================================================
+echo ""
+echo "Step 2: Creating OAuth application: $APP_NAME ..."
+
+# Check if app already exists
+LIST_RESP=$(curl -s $CURL_SSL -w "\n%{http_code}" \
+    "${IS_BASE}/api/server/v1/applications?filter=name+eq+${APP_NAME}" \
+    -H "Authorization: Basic $ADMIN_CRED")
+LIST_HTTP_CODE=$(echo "$LIST_RESP" | tail -1)
+LIST_BODY=$(echo "$LIST_RESP" | sed '$d')
+
+if [ "$LIST_HTTP_CODE" != "200" ]; then
+    echo "  WARNING: App listing returned HTTP $LIST_HTTP_CODE"
+    echo "  Response: $LIST_BODY"
+fi
+
+EXISTING_APP=$(echo "$LIST_BODY" | python3 -c "
+import sys, json
+try:
+    d = json.load(sys.stdin)
+    apps = d.get('applications', [])
+    print(apps[0]['id'] if apps else '')
+except Exception as e:
+    print(f'  JSON parse error: {e}', file=sys.stderr)
+    print('')
+" 2>/dev/null)
+
+if [ -n "$EXISTING_APP" ]; then
+    APP_ID="$EXISTING_APP"
+    echo "  App already exists: $APP_ID — deleting and recreating..."
+    DEL_CODE=$(curl -s $CURL_SSL -o /dev/null -w "%{http_code}" -X DELETE \
+        "${IS_BASE}/api/server/v1/applications/${APP_ID}" \
+        -H "Authorization: Basic $ADMIN_CRED")
+    echo "  Delete returned HTTP $DEL_CODE"
+fi
+
+# Build the app creation JSON payload using python3 for safe JSON construction
+# (matches production pattern from TestData_Add_OAuth_Apps_Without_Consent.jmx)
+APP_JSON=$(python3 -c "
+import json, sys
+
+adaptive_script = sys.argv[1]
+app_name = sys.argv[2]
+callback_url = sys.argv[3]
+client_id = sys.argv[4]
+client_secret = sys.argv[5]
+
+payload = {
+    'name': app_name,
+    'description': 'Performance test app for adaptive script testing',
+    'claimConfiguration': {
+        'dialect': 'LOCAL',
+        'requestedClaims': [],
+        'subject': {
+            'claim': {'uri': 'http://wso2.org/claims/username'},
+            'includeUserDomain': False,
+            'includeTenantDomain': False,
+            'useMappedLocalSubject': False
+        }
+    },
+    'inboundProtocolConfiguration': {
+        'oidc': {
+            'accessToken': {
+                'type': 'Default',
+                'userAccessTokenExpiryInSeconds': 3600,
+                'applicationAccessTokenExpiryInSeconds': 3600,
+                'bindingType': 'sso-session',
+                'revokeTokensWhenIDPSessionTerminated': False,
+                'validateTokenBinding': False
+            },
+            'allowedOrigins': [],
+            'callbackURLs': [callback_url],
+            'grantTypes': ['authorization_code'],
+            'idToken': {
+                'audience': [],
+                'encryption': {
+                    'algorithm': '',
+                    'enabled': False,
+                    'method': ''
+                },
+                'expiryInSeconds': 3600
+            },
+            'pkce': {
+                'mandatory': False,
+                'supportPlainTransformAlgorithm': True
+            },
+            'publicClient': False,
+            'refreshToken': {
+                'expiryInSeconds': 86400,
+                'renewRefreshToken': True
+            },
+            'scopeValidators': [],
+            'validateRequestObjectSignature': False,
+            'clientId': client_id,
+            'clientSecret': client_secret
+        }
+    },
+    'advancedConfigurations': {
+        'skipLoginConsent': True,
+        'skipLogoutConsent': True,
+        'enableAPIBasedAuthentication': True
+    },
+    'authenticationSequence': {
+        'type': 'USER_DEFINED',
+        'steps': [
+            {
+                'id': 1,
+                'options': [{'idp': 'LOCAL', 'authenticator': 'BasicAuthenticator'}]
+            },
+            {
+                'id': 2,
+                'options': [{'idp': 'LOCAL', 'authenticator': 'totp'}]
+            }
+        ],
+        'subjectStepId': 1,
+        'attributeStepId': 1,
+        'script': adaptive_script
+    }
+}
+
+print(json.dumps(payload))
+" "$ADAPTIVE_SCRIPT" "$APP_NAME" "$CALLBACK_URL" "$CLIENT_ID_VALUE" "$CLIENT_SECRET_VALUE")
+
+if [ -z "$APP_JSON" ]; then
+    echo "  ERROR: Failed to build app creation JSON payload"
+    exit 1
+fi
+
+echo "  App creation payload built ($(echo "$APP_JSON" | wc -c | tr -d ' ') bytes)"
+
+CREATE_RESP=$(curl -s $CURL_SSL -w "\n%{http_code}" -X POST "${IS_BASE}/api/server/v1/applications" \
     -H "Authorization: Basic $ADMIN_CRED" \
     -H "Content-Type: application/json" \
-    -d "{
-        \"authenticationSequence\": {
-            \"type\": \"USER_DEFINED\",
-            \"steps\": [
-                {
-                    \"id\": 1,
-                    \"options\": [{\"idp\": \"LOCAL\", \"authenticator\": \"BasicAuthenticator\"}]
-                },
-                {
-                    \"id\": 2,
-                    \"options\": [{\"idp\": \"LOCAL\", \"authenticator\": \"totp\"}]
-                }
-            ],
-            \"script\": \"$ADAPTIVE_SCRIPT\"
-        }
-    }" -o /dev/null
+    -d "$APP_JSON")
+CREATE_HTTP_CODE=$(echo "$CREATE_RESP" | tail -1)
+CREATE_BODY=$(echo "$CREATE_RESP" | sed '$d')
 
-echo "  Authentication sequence configured (2-step with adaptive script)"
+if [ "$CREATE_HTTP_CODE" != "201" ] && [ "$CREATE_HTTP_CODE" != "200" ]; then
+    echo "  ERROR: App creation returned HTTP $CREATE_HTTP_CODE"
+    echo "  Response: $CREATE_BODY"
+    exit 1
+fi
+
+APP_ID=$(echo "$CREATE_BODY" | python3 -c "
+import sys, json
+try:
+    print(json.load(sys.stdin).get('id',''))
+except:
+    print('')
+")
+echo "  App created: $APP_ID"
+
+if [ -z "$APP_ID" ]; then
+    echo "ERROR: Could not create application. Check API responses above."
+    exit 1
+fi
+
+# Use the explicit client ID/secret we set (no need to query OIDC config)
+CLIENT_ID="$CLIENT_ID_VALUE"
+CLIENT_SECRET="$CLIENT_SECRET_VALUE"
+
+echo "  Client ID: $CLIENT_ID"
+echo "  Client Secret: $CLIENT_SECRET"
+echo "  Auth sequence: USER_DEFINED (2-step adaptive script — configured inline)"
+
+# Save credentials
+echo "clientId,clientSecret,callbackUrl,appId" > "$CREDS_FILE"
+echo "${CLIENT_ID},${CLIENT_SECRET},${CALLBACK_URL},${APP_ID}" >> "$CREDS_FILE"
+echo "  Saved to $CREDS_FILE"
 
 # ============================================================
 # Step 3: Create Application Roles
@@ -235,29 +326,41 @@ EMPLOYEE_ROLE_ID=""
 
 for role_name in admin manager employee; do
     # Check if role already exists
-    EXISTING_ROLE=$(curl -s $CURL_SSL \
+    ROLE_LIST_BODY=$(curl -s $CURL_SSL \
         "${IS_BASE}/scim2/v2/Roles?filter=displayName+eq+${role_name}+and+audience.value+eq+${APP_ID}" \
-        -H "Authorization: Basic $ADMIN_CRED" | \
-        python3 -c "
+        -H "Authorization: Basic $ADMIN_CRED")
+
+    EXISTING_ROLE=$(echo "$ROLE_LIST_BODY" | python3 -c "
 import sys, json
-d = json.load(sys.stdin)
-resources = d.get('Resources', [])
-for r in resources:
-    aud = r.get('audience', {})
-    if aud.get('value') == '$APP_ID':
-        print(r['id'])
-        break
+try:
+    d = json.load(sys.stdin)
+    resources = d.get('Resources', [])
+    for r in resources:
+        aud = r.get('audience', {})
+        if aud.get('value') == '$APP_ID':
+            print(r['id'])
+            break
+except:
+    pass
 " 2>/dev/null)
 
     if [ -n "$EXISTING_ROLE" ]; then
         ROLE_ID="$EXISTING_ROLE"
         echo "  $role_name: exists ($ROLE_ID)"
     else
-        ROLE_ID=$(curl -s $CURL_SSL -X POST "${IS_BASE}/scim2/v2/Roles" \
+        ROLE_CREATE_RESP=$(curl -s $CURL_SSL -w "\n%{http_code}" -X POST "${IS_BASE}/scim2/v2/Roles" \
             -H "Authorization: Basic $ADMIN_CRED" \
             -H "Content-Type: application/json" \
-            -d "{\"displayName\": \"$role_name\", \"audience\": {\"value\": \"$APP_ID\", \"type\": \"application\"}}" | \
-            python3 -c "import sys,json; print(json.load(sys.stdin).get('id',''))" 2>/dev/null)
+            -d "{\"displayName\": \"$role_name\", \"audience\": {\"value\": \"$APP_ID\", \"type\": \"application\"}}")
+        ROLE_CREATE_CODE=$(echo "$ROLE_CREATE_RESP" | tail -1)
+        ROLE_CREATE_BODY=$(echo "$ROLE_CREATE_RESP" | sed '$d')
+
+        if [ "$ROLE_CREATE_CODE" != "201" ] && [ "$ROLE_CREATE_CODE" != "200" ]; then
+            echo "  WARNING: $role_name role creation returned HTTP $ROLE_CREATE_CODE"
+            echo "  Response: $ROLE_CREATE_BODY"
+        fi
+
+        ROLE_ID=$(echo "$ROLE_CREATE_BODY" | python3 -c "import sys,json; print(json.load(sys.stdin).get('id',''))" 2>/dev/null || echo "")
         echo "  $role_name: created ($ROLE_ID)"
     fi
 
@@ -294,7 +397,14 @@ for ((start=1; start<=USER_COUNT; start+=BATCH_SIZE)); do
         USER_ID=$(curl -s $CURL_SSL \
             "${IS_BASE}/scim2/Users?filter=userName+eq+${USERNAME}&attributes=id" \
             -H "Authorization: Basic $ADMIN_CRED" | \
-            python3 -c "import sys,json; u=json.load(sys.stdin).get('Resources',[]); print(u[0]['id'] if u else '')" 2>/dev/null)
+            python3 -c "
+import sys, json
+try:
+    u = json.load(sys.stdin).get('Resources', [])
+    print(u[0]['id'] if u else '')
+except:
+    print('')
+")
 
         if [ -n "$USER_ID" ]; then
             if [ -n "$USER_VALUES" ]; then
@@ -307,10 +417,16 @@ for ((start=1; start<=USER_COUNT; start+=BATCH_SIZE)); do
 
     # Batch assign to employee role
     if [ -n "$USER_VALUES" ]; then
-        curl -s $CURL_SSL -X PATCH "${IS_BASE}/scim2/v2/Roles/$EMPLOYEE_ROLE_ID" \
+        ASSIGN_RESP=$(curl -s $CURL_SSL -w "\n%{http_code}" -X PATCH "${IS_BASE}/scim2/v2/Roles/$EMPLOYEE_ROLE_ID" \
             -H "Authorization: Basic $ADMIN_CRED" \
             -H "Content-Type: application/json" \
-            -d "{\"Operations\": [{\"op\": \"add\", \"path\": \"users\", \"value\": [$USER_VALUES]}]}" -o /dev/null
+            -d "{\"Operations\": [{\"op\": \"add\", \"path\": \"users\", \"value\": [$USER_VALUES]}]}")
+        ASSIGN_CODE=$(echo "$ASSIGN_RESP" | tail -1)
+        if [ "$ASSIGN_CODE" != "200" ]; then
+            ASSIGN_BODY=$(echo "$ASSIGN_RESP" | sed '$d')
+            echo "  WARNING: Role assignment returned HTTP $ASSIGN_CODE for users $start-$end"
+            echo "  Response: $(echo "$ASSIGN_BODY" | head -c 200)"
+        fi
     fi
 
     echo "  Assigned users $start-$end ($ASSIGNED total so far)"
@@ -367,7 +483,13 @@ if [ "$ADMIN_COUNT" -gt 0 ] || [ "$MANAGER_COUNT" -gt 0 ] || [ "$EMPLOYEE_COUNT"
                 -H "Authorization: Basic $ADMIN_CRED" \
                 -H "Content-Type: application/json" \
                 -d "{\"schemas\":[\"urn:ietf:params:scim:schemas:core:2.0:User\"],\"userName\":\"$username\",\"password\":\"$ROLE_USER_PASSWORD\",\"name\":{\"givenName\":\"$role_name\",\"familyName\":\"User\"},\"emails\":[{\"primary\":true,\"value\":\"${username}@example.com\"}]}" | \
-                python3 -c "import sys,json; print(json.load(sys.stdin).get('id',''))" 2>/dev/null)
+                python3 -c "
+import sys, json
+try:
+    print(json.load(sys.stdin).get('id',''))
+except:
+    print('')
+")
 
             if [ -z "$user_id" ]; then
                 echo "  WARNING: Failed to create $username (may already exist)"
@@ -375,7 +497,14 @@ if [ "$ADMIN_COUNT" -gt 0 ] || [ "$MANAGER_COUNT" -gt 0 ] || [ "$EMPLOYEE_COUNT"
                 user_id=$(curl -s $CURL_SSL \
                     "${IS_BASE}/scim2/Users?filter=userName+eq+${username}&attributes=id" \
                     -H "Authorization: Basic $ADMIN_CRED" | \
-                    python3 -c "import sys,json; u=json.load(sys.stdin).get('Resources',[]); print(u[0]['id'] if u else '')" 2>/dev/null)
+                    python3 -c "
+import sys, json
+try:
+    u = json.load(sys.stdin).get('Resources', [])
+    print(u[0]['id'] if u else '')
+except:
+    print('')
+")
             fi
 
             if [ -n "$user_id" ]; then
@@ -393,10 +522,13 @@ if [ "$ADMIN_COUNT" -gt 0 ] || [ "$MANAGER_COUNT" -gt 0 ] || [ "$EMPLOYEE_COUNT"
             # Batch assign roles every 50 users
             if [ "$batch_count" -ge 50 ] || [ "$i" -eq "$count" ]; then
                 if [ -n "$batch_user_values" ]; then
-                    curl -s $CURL_SSL -X PATCH "${IS_BASE}/scim2/v2/Roles/$role_id" \
+                    local batch_assign_code=$(curl -s $CURL_SSL -o /dev/null -w "%{http_code}" -X PATCH "${IS_BASE}/scim2/v2/Roles/$role_id" \
                         -H "Authorization: Basic $ADMIN_CRED" \
                         -H "Content-Type: application/json" \
-                        -d "{\"Operations\": [{\"op\": \"add\", \"path\": \"users\", \"value\": [$batch_user_values]}]}" -o /dev/null
+                        -d "{\"Operations\": [{\"op\": \"add\", \"path\": \"users\", \"value\": [$batch_user_values]}]}")
+                    if [ "$batch_assign_code" != "200" ]; then
+                        echo "  WARNING: $role_name batch assign returned HTTP $batch_assign_code"
+                    fi
                     echo "  $role_name: assigned batch up to $i ($created created)"
                     batch_user_values=""
                     batch_count=0
