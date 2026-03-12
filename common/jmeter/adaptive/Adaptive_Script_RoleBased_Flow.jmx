@@ -537,7 +537,15 @@ vars.put("totpCode", String.format("%06d", otp % 1000000))
         </hashTree>
 
         <!-- ============================================================ -->
-        <!-- STEP 3: GET /oauth2/authorize (Post-Auth) - Extract Code     -->
+        <!-- STEP 3: GET /t/carbon.super/oauth2/authorize (Post-Auth)     -->
+        <!-- IS 7.2.x internal re-authorization step. After /commonauth   -->
+        <!-- IS redirects to /t/carbon.super/oauth2/authorize, NOT plain  -->
+        <!-- /oauth2/authorize. The tenant-qualified path is required for -->
+        <!-- IS to recognize this as a post-auth continuation and issue   -->
+        <!-- the authorization code. Using /oauth2/authorize works with   -->
+        <!-- the default IS pack but fails with updated packs that have   -->
+        <!-- stricter session resolution (e.g. externalized adaptive      -->
+        <!-- scripting).                                                  -->
         <!-- ============================================================ -->
         <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy"
                           testname="3 Get Authorization Code" enabled="true">
@@ -556,7 +564,7 @@ vars.put("totpCode", String.format("%06d", otp % 1000000))
           <stringProp name="HTTPSampler.domain">${is_host}</stringProp>
           <stringProp name="HTTPSampler.port">${is_port}</stringProp>
           <stringProp name="HTTPSampler.protocol">https</stringProp>
-          <stringProp name="HTTPSampler.path">/oauth2/authorize</stringProp>
+          <stringProp name="HTTPSampler.path">/t/carbon.super/oauth2/authorize</stringProp>
           <stringProp name="HTTPSampler.method">GET</stringProp>
           <boolProp name="HTTPSampler.follow_redirects">false</boolProp>
           <boolProp name="HTTPSampler.auto_redirects">false</boolProp>
