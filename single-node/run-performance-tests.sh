@@ -45,9 +45,10 @@ function before_execute_test_scenario() {
 function after_execute_test_scenario() {
 
     is_home="/home/ubuntu/wso2is"
-    write_server_metrics $wso2is_host_alias $wso2is_host_alias
+    # Use "wso2is" prefix (not "wso2is1") to match create-summary-csv.sh -p wso2is -k 1
+    write_server_metrics $wso2is_host_alias wso2is
     download_file "$wso2is_host_alias" $is_home/repository/logs/wso2carbon.log "$wso2is_host_alias.log"
-    download_file "$wso2is_host_alias" $is_home/repository/logs/gc.log $wso2is_host_alias"_gc.log"
+    download_file "$wso2is_host_alias" $is_home/repository/logs/gc.log "wso2is_gc.log"
     download_file "$wso2is_host_alias" $is_home/repository/logs/heap-dump.hprof "$wso2is_host_alias-heap-dump.hprof"
     # Download GraalJS microservice log if it exists
     download_file "$wso2is_host_alias" /home/ubuntu/graaljs-microservice.log "graaljs-microservice.log" 2>/dev/null || true

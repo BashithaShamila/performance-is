@@ -111,10 +111,10 @@ else
 fi
 
 # ============================================================
-# Step 1: Load Adaptive Script
+# Step 1: Verify Adaptive Script File
 # ============================================================
 echo ""
-echo "Step 1: Loading adaptive script ..."
+echo "Step 1: Verifying adaptive script file ..."
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ADAPTIVE_SCRIPT_FILE="${ADAPTIVE_SCRIPT_FILE:-$SCRIPT_DIR/adaptive-script.js}"
@@ -124,23 +124,10 @@ if [ ! -f "$ADAPTIVE_SCRIPT_FILE" ]; then
     exit 1
 fi
 
-echo "  Loading script from: $ADAPTIVE_SCRIPT_FILE"
+echo "  Script file: $ADAPTIVE_SCRIPT_FILE"
+echo "  Contents:"
 cat "$ADAPTIVE_SCRIPT_FILE"
 echo ""
-
-# Escape the script content for JSON embedding
-ADAPTIVE_SCRIPT=$(python3 -c "
-import json, sys
-with open(sys.argv[1]) as f:
-    content = f.read().strip()
-print(json.dumps(content)[1:-1])
-" "$ADAPTIVE_SCRIPT_FILE")
-
-if [ -z "$ADAPTIVE_SCRIPT" ]; then
-    echo "  ERROR: Failed to load/escape adaptive script"
-    exit 1
-fi
-echo "  Adaptive script loaded and escaped for JSON"
 
 # ============================================================
 # Step 2: Create OAuth Application (with auth sequence inline)
@@ -178,18 +165,26 @@ if [ -n "$EXISTING_APP" ]; then
         "${IS_BASE}/api/server/v1/applications/${APP_ID}" \
         -H "Authorization: Basic $ADMIN_CRED")
     echo "  Delete returned HTTP $DEL_CODE"
+    sleep 2
 fi
 
-# Build the app creation JSON payload using python3 for safe JSON construction
-# (matches production pattern from TestData_Add_OAuth_Apps_Without_Consent.jmx)
-APP_JSON=$(python3 -c "
+# Build the app creation JSON payload using python3 for safe JSON construction.
+# IMPORTANT: python3 reads the adaptive script file directly to avoid double-escaping
+# through shell variable expansion. (matches production pattern from TestData_Add_OAuth_Apps_Without_Consent.jmx)
+APP_JSON_FILE="/tmp/adaptive_app_payload.json"
+python3 -c "
 import json, sys
 
-adaptive_script = sys.argv[1]
+script_file = sys.argv[1]
 app_name = sys.argv[2]
 callback_url = sys.argv[3]
 client_id = sys.argv[4]
 client_secret = sys.argv[5]
+output_file = sys.argv[6]
+
+# Read adaptive script directly from file — no shell variable intermediary
+with open(script_file) as f:
+    adaptive_script = f.read().strip()
 
 payload = {
     'name': app_name,
@@ -264,42 +259,81 @@ payload = {
     }
 }
 
-print(json.dumps(payload))
-" "$ADAPTIVE_SCRIPT" "$APP_NAME" "$CALLBACK_URL" "$CLIENT_ID_VALUE" "$CLIENT_SECRET_VALUE")
+# Write JSON to file to avoid shell escaping issues with curl -d
+with open(output_file, 'w') as f:
+    json.dump(payload, f)
 
-if [ -z "$APP_JSON" ]; then
+print(f'Payload written to {output_file} ({len(json.dumps(payload))} bytes)')
+" "$ADAPTIVE_SCRIPT_FILE" "$APP_NAME" "$CALLBACK_URL" "$CLIENT_ID_VALUE" "$CLIENT_SECRET_VALUE" "$APP_JSON_FILE"
+
+if [ ! -f "$APP_JSON_FILE" ]; then
     echo "  ERROR: Failed to build app creation JSON payload"
     exit 1
 fi
 
-echo "  App creation payload built ($(echo "$APP_JSON" | wc -c | tr -d ' ') bytes)"
+echo "  App creation payload written to $APP_JSON_FILE"
 
+# Use curl @file to send JSON — avoids all shell escaping issues
 CREATE_RESP=$(curl -s $CURL_SSL -w "\n%{http_code}" -X POST "${IS_BASE}/api/server/v1/applications" \
     -H "Authorization: Basic $ADMIN_CRED" \
     -H "Content-Type: application/json" \
-    -d "$APP_JSON")
+    -d @"$APP_JSON_FILE")
 CREATE_HTTP_CODE=$(echo "$CREATE_RESP" | tail -1)
 CREATE_BODY=$(echo "$CREATE_RESP" | sed '$d')
 
+# Always log response for debugging
+echo "  HTTP Response Code: $CREATE_HTTP_CODE"
+echo "  Response Body (first 500 chars): $(echo "$CREATE_BODY" | head -c 500)"
+
 if [ "$CREATE_HTTP_CODE" != "201" ] && [ "$CREATE_HTTP_CODE" != "200" ]; then
-    echo "  ERROR: App creation returned HTTP $CREATE_HTTP_CODE"
-    echo "  Response: $CREATE_BODY"
+    echo "  ERROR: App creation failed with HTTP $CREATE_HTTP_CODE"
+    echo "  Full Response: $CREATE_BODY"
     exit 1
 fi
 
 APP_ID=$(echo "$CREATE_BODY" | python3 -c "
 import sys, json
 try:
-    print(json.load(sys.stdin).get('id',''))
-except:
+    data = json.load(sys.stdin)
+    app_id = data.get('id','')
+    if not app_id:
+        print(f'  WARNING: No id field in response. Keys: {list(data.keys())}', file=sys.stderr)
+    print(app_id)
+except Exception as e:
+    print(f'  JSON parse error: {e}', file=sys.stderr)
     print('')
 ")
 echo "  App created: $APP_ID"
 
+# Fallback: if APP_ID is empty, try to fetch it by name
 if [ -z "$APP_ID" ]; then
-    echo "ERROR: Could not create application. Check API responses above."
+    echo "  WARNING: APP_ID empty from creation response. Trying to fetch by name..."
+    sleep 2
+    FETCH_RESP=$(curl -s $CURL_SSL -w "\n%{http_code}" \
+        "${IS_BASE}/api/server/v1/applications?filter=name+eq+${APP_NAME}" \
+        -H "Authorization: Basic $ADMIN_CRED")
+    FETCH_CODE=$(echo "$FETCH_RESP" | tail -1)
+    FETCH_BODY=$(echo "$FETCH_RESP" | sed '$d')
+    echo "  Fetch by name HTTP: $FETCH_CODE"
+    APP_ID=$(echo "$FETCH_BODY" | python3 -c "
+import sys, json
+try:
+    d = json.load(sys.stdin)
+    apps = d.get('applications', [])
+    print(apps[0]['id'] if apps else '')
+except:
+    print('')
+")
+    echo "  Fetched APP_ID: $APP_ID"
+fi
+
+if [ -z "$APP_ID" ]; then
+    echo "  ERROR: Could not create or find application. Check API responses above."
     exit 1
 fi
+
+# Clean up temp file
+rm -f "$APP_JSON_FILE"
 
 # Use the explicit client ID/secret we set (no need to query OIDC config)
 CLIENT_ID="$CLIENT_ID_VALUE"
