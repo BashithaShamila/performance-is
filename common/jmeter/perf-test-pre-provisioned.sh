@@ -328,9 +328,9 @@ function measure_time() {
 
 function write_server_metrics() {
     local ssh_host=$1
+    local ssh_host_alias=$2
     echo ""
     echo "Collecting server metrics for $ssh_host_alias."
-    local ssh_host_alias=$2
     local pgrep_pattern=$3
     local command_prefix=""
     export LC_TIME=C

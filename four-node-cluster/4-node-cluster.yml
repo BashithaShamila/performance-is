@@ -514,6 +514,7 @@ Resources:
             - apt-get update
             - DEBIAN_FRONTEND=noninteractive apt-get install -yq nginx
             - mkdir -p /etc/nginx/ssl/is
+            - touch /tmp/nginx-cloud-init-complete
 
   WSO2ISNodeLaunchConfigurationsuffix:
     Type: 'AWS::AutoScaling::LaunchConfiguration'

@@ -62,6 +62,27 @@ while getopts "n:i:w:j:k:h" opts; do
 done
 
 echo ""
+echo "Waiting for cloud-init to finish installing nginx..."
+echo "============================================"
+max_attempts=30
+attempt=0
+while [[ $attempt -lt $max_attempts ]]; do
+    if command -v nginx &>/dev/null && [[ -d /etc/nginx/conf.d ]]; then
+        echo "nginx is installed and ready (attempt $((attempt+1))/$max_attempts)."
+        break
+    fi
+    attempt=$((attempt+1))
+    echo "  Attempt $attempt/$max_attempts: nginx not yet installed. Waiting 10s..."
+    sleep 10
+done
+
+if ! command -v nginx &>/dev/null || [[ ! -d /etc/nginx/conf.d ]]; then
+    echo "ERROR: nginx was not installed after $max_attempts attempts ($((max_attempts*10))s)."
+    echo "Cloud-init may have failed on the nginx instance."
+    exit 1
+fi
+
+echo ""
 echo "Coping files..."
 echo "============================================"
 sudo cp resources/server.* /etc/nginx/ssl/is/
