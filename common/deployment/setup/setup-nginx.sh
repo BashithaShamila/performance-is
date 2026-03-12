@@ -64,7 +64,9 @@ done
 echo ""
 echo "Waiting for cloud-init to finish installing nginx..."
 echo "============================================"
-max_attempts=30
+# Wait up to ~60s for cloud-init to install nginx. If it doesn't, the fallback
+# below will handle it, so we don't need to wait the full 300s.
+max_attempts=6
 attempt=0
 while [[ $attempt -lt $max_attempts ]]; do
     if command -v nginx &>/dev/null && [[ -d /etc/nginx/conf.d ]]; then
@@ -76,10 +78,47 @@ while [[ $attempt -lt $max_attempts ]]; do
     sleep 10
 done
 
+# ---------------------------------------------------------------------------
+# Fallback: install nginx directly if cloud-init failed.
+#
+# The nginx EC2 instance sits in a private subnet and relies on a NAT Gateway
+# to reach the Ubuntu apt mirrors. Cloud-init fires very early in the boot
+# sequence — often before the NAT Gateway is fully routing traffic — so
+# `apt-get update && apt-get install nginx` can silently fail, leaving
+# nginx uninstalled.  This is non-deterministic: it depends on how quickly
+# AWS provisions the NAT route relative to the EC2 instance boot.
+#
+# By the time this script executes, SSH connectivity to the nginx instance
+# is already confirmed (we were invoked over SSH from the bastion), which
+# guarantees that outbound networking is now functional. So we can safely
+# retry the install ourselves with a high chance of success.
+# ---------------------------------------------------------------------------
 if ! command -v nginx &>/dev/null || [[ ! -d /etc/nginx/conf.d ]]; then
-    echo "ERROR: nginx was not installed after $max_attempts attempts ($((max_attempts*10))s)."
-    echo "Cloud-init may have failed on the nginx instance."
-    exit 1
+    echo ""
+    echo "WARNING: nginx was not installed by cloud-init after $max_attempts attempts ($((max_attempts*10))s)."
+    echo "Attempting fallback: installing nginx directly (network is available since SSH works)..."
+    echo "============================================"
+
+    fallback_max=3
+    for ((fallback_attempt=1; fallback_attempt<=fallback_max; fallback_attempt++)); do
+        echo "  Fallback attempt $fallback_attempt/$fallback_max: running apt-get update && apt-get install nginx..."
+        sudo apt-get update -qq 2>&1 && \
+        sudo DEBIAN_FRONTEND=noninteractive apt-get install -yq nginx 2>&1 && \
+        sudo mkdir -p /etc/nginx/ssl/is && \
+        break
+
+        echo "  Fallback attempt $fallback_attempt/$fallback_max failed. Waiting 15s before retry..."
+        sleep 15
+    done
+
+    # Final check after fallback attempts
+    if ! command -v nginx &>/dev/null || [[ ! -d /etc/nginx/conf.d ]]; then
+        echo "ERROR: nginx installation failed even after $fallback_max fallback attempts."
+        echo "Both cloud-init and direct apt-get install were unable to install nginx."
+        exit 1
+    fi
+
+    echo "Fallback succeeded — nginx is now installed and ready."
 fi
 
 echo ""
