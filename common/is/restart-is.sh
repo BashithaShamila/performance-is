@@ -94,3 +94,29 @@ echo "Waiting $waiting_time seconds..."
 sleep $waiting_time
 
 echo "Finished starting identity server..."
+
+# Restart external GraalJS sidecar if it was previously running.
+# The 'killall java' above also kills the sidecar process.
+# Check for the PID file written by update-is-conf.sh during initial setup.
+graaljs_pid_file="/home/ubuntu/graaljs-microservice.pid"
+graaljs_log_file="/home/ubuntu/graaljs-microservice.log"
+if [[ -f "$graaljs_pid_file" ]]; then
+    echo ""
+    echo "Restarting external GraalJS sidecar (killed by 'killall java')..."
+    echo "-------------------------------------------"
+    graaljs_jar=$(ls /home/ubuntu/graaljs-sidecar-*.jar 2>/dev/null | head -1)
+    if [[ -n "$graaljs_jar" ]]; then
+        nohup java -jar "$graaljs_jar" grpc 50051 > "$graaljs_log_file" 2>&1 &
+        GRAALJS_PID=$!
+        echo "$GRAALJS_PID" > "$graaljs_pid_file"
+        echo "GraalJS sidecar started with PID: $GRAALJS_PID"
+        sleep 10s
+        if kill -0 "$GRAALJS_PID" 2>/dev/null; then
+            echo "GraalJS sidecar is running on localhost:50051."
+        else
+            echo "WARNING: GraalJS sidecar failed to start. Check $graaljs_log_file"
+        fi
+    else
+        echo "WARNING: GraalJS sidecar JAR not found in /home/ubuntu/. Skipping restart."
+    fi
+fi
