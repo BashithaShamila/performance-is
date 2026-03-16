@@ -670,6 +670,30 @@ vars.put("totpCode", String.format("%06d", otp % 1000000))
           <hashTree/>
         </hashTree>
 
+        <!-- ============================================================ -->
+        <!-- PERF-TRACE: Per-request timing logger for Jenkins console     -->
+        <!-- Fires after every sampler. Grep [PERF-TRACE] to extract.     -->
+        <!-- ============================================================ -->
+        <JSR223Listener guiclass="TestBeanGUI" testclass="JSR223Listener"
+                        testname="PERF-TRACE Timing Logger" enabled="true">
+          <stringProp name="cacheKey">true</stringProp>
+          <stringProp name="filename"></stringProp>
+          <stringProp name="parameters"></stringProp>
+          <stringProp name="scriptLanguage">groovy</stringProp>
+          <stringProp name="script">
+def label = prev.getSampleLabel()
+def user = vars.get("testUsername") ?: "N/A"
+def thr = ctx.getThreadNum()
+def startMs = prev.getStartTime()
+def endMs = prev.getEndTime()
+def elapsed = prev.getTime()
+def code = prev.getResponseCode()
+def ok = prev.isSuccessful()
+System.out.println("[PERF-TRACE] " + label + " user=" + user + " thr=" + thr + " start=" + startMs + " end=" + endMs + " elapsed=" + elapsed + "ms code=" + code + " pass=" + ok)
+          </stringProp>
+        </JSR223Listener>
+        <hashTree/>
+
       </hashTree>
     </hashTree>
   </hashTree>
