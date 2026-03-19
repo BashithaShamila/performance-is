@@ -44,7 +44,7 @@ enable_high_concurrency=false
 use_db_snapshot=false
 db_snapshot_id=""
 enable_graaljs_sidecar=true
-graaljs_sidecar_url="${GRAALJS_SIDECAR_URL:-https://github.com/BashithaShamila/external-graaljs/releases/download/v1.0.0-SNAPSHOT/graaljs-sidecar-1.0.0-SNAPSHOT.jar}"
+graaljs_sidecar_url="${GRAALJS_SIDECAR_URL:-https://github.com/BashithaShamila/external-graaljs/releases/download/v1.0.1-SNAPSHOT/graaljs-sidecar-1.0.0-SNAPSHOT.jar}"
 
 results_dir="$PWD/results-$timestamp"
 default_minimum_stack_creation_wait_time=10
