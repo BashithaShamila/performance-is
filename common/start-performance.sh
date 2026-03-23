@@ -45,6 +45,7 @@ use_db_snapshot=false
 db_snapshot_id=""
 enable_graaljs_sidecar=true
 graaljs_sidecar_url="${GRAALJS_SIDECAR_URL:-https://github.com/BashithaShamila/external-graaljs/releases/download/v1.0.1-SNAPSHOT/graaljs-sidecar-1.0.0-SNAPSHOT.jar}"
+enable_dummy_service=true
 
 results_dir="$PWD/results-$timestamp"
 default_minimum_stack_creation_wait_time=10
@@ -497,27 +498,27 @@ execute_db_command "$session_rds_host" "/home/ubuntu/workspace/setup/resources/$
 echo ""
 echo "Running IS node 1 setup script..."
 echo "============================================"
-ssh_bastion_cmd "./setup/setup-is.sh -n $no_of_nodes -m $db_type -c $is_case_insensitive_username_and_attributes -a wso2is1 -t $keystore_type -i $wso2_is_1_ip -w $wso2_is_2_ip -j $wso2_is_3_ip -k $wso2_is_4_ip -r $rds_host -s $session_rds_host -g $enable_graaljs_sidecar"
+ssh_bastion_cmd "./setup/setup-is.sh -n $no_of_nodes -m $db_type -c $is_case_insensitive_username_and_attributes -a wso2is1 -t $keystore_type -i $wso2_is_1_ip -w $wso2_is_2_ip -j $wso2_is_3_ip -k $wso2_is_4_ip -r $rds_host -s $session_rds_host -g $enable_graaljs_sidecar -d $enable_dummy_service"
 
 if [[ $no_of_nodes -gt 1 ]]; then
     echo ""
     echo "Running IS node 2 setup script..."
     echo "============================================"
-    ssh_bastion_cmd "./setup/setup-is.sh -n $no_of_nodes -m $db_type -c $is_case_insensitive_username_and_attributes -a wso2is2 -t $keystore_type -i $wso2_is_2_ip -w $wso2_is_1_ip -j $wso2_is_3_ip -k $wso2_is_4_ip -r $rds_host -s $session_rds_host -g $enable_graaljs_sidecar"
+    ssh_bastion_cmd "./setup/setup-is.sh -n $no_of_nodes -m $db_type -c $is_case_insensitive_username_and_attributes -a wso2is2 -t $keystore_type -i $wso2_is_2_ip -w $wso2_is_1_ip -j $wso2_is_3_ip -k $wso2_is_4_ip -r $rds_host -s $session_rds_host -g $enable_graaljs_sidecar -d $enable_dummy_service"
 fi
 
 if [[ $no_of_nodes -gt 2 ]]; then
     echo ""
     echo "Running IS node 3 setup script..."
     echo "============================================"
-    ssh_bastion_cmd "./setup/setup-is.sh -n $no_of_nodes -m $db_type -c $is_case_insensitive_username_and_attributes -a wso2is3 -t $keystore_type -i $wso2_is_3_ip -w $wso2_is_2_ip -j $wso2_is_1_ip -k $wso2_is_4_ip -r $rds_host -s $session_rds_host -g $enable_graaljs_sidecar"
+    ssh_bastion_cmd "./setup/setup-is.sh -n $no_of_nodes -m $db_type -c $is_case_insensitive_username_and_attributes -a wso2is3 -t $keystore_type -i $wso2_is_3_ip -w $wso2_is_2_ip -j $wso2_is_1_ip -k $wso2_is_4_ip -r $rds_host -s $session_rds_host -g $enable_graaljs_sidecar -d $enable_dummy_service"
 fi
 
 if [[ $no_of_nodes -gt 3 ]]; then
     echo ""
     echo "Running IS node 4 setup script..."
     echo "============================================"
-    ssh_bastion_cmd "./setup/setup-is.sh -n $no_of_nodes -m $db_type -c $is_case_insensitive_username_and_attributes -a wso2is4 -t $keystore_type -i $wso2_is_4_ip -w $wso2_is_3_ip -j $wso2_is_2_ip -k $wso2_is_1_ip -r $rds_host -s $session_rds_host -g $enable_graaljs_sidecar"
+    ssh_bastion_cmd "./setup/setup-is.sh -n $no_of_nodes -m $db_type -c $is_case_insensitive_username_and_attributes -a wso2is4 -t $keystore_type -i $wso2_is_4_ip -w $wso2_is_3_ip -j $wso2_is_2_ip -k $wso2_is_1_ip -r $rds_host -s $session_rds_host -g $enable_graaljs_sidecar -d $enable_dummy_service"
 fi
 
 echo ""

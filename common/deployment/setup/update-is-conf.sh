@@ -119,12 +119,14 @@ function usage() {
     echo "-m: Database type."
     echo "-c: Case insensitivity of the username and attributes."
     echo "-g: Start external GraalJS microservice for adaptive scripting (true/false)."
+    echo "-d: Start dummy latency service on the IS node (true/false)."
     echo ""
 }
 
 start_graaljs_service=false
+start_dummy_service=false
 
-while getopts "n:w:i:j:k:r:s:t:m:c:g:h" opts; do
+while getopts "n:w:i:j:k:r:s:t:m:c:g:d:h" opts; do
     case $opts in
     n)
         no_of_nodes=${OPTARG}
@@ -158,6 +160,9 @@ while getopts "n:w:i:j:k:r:s:t:m:c:g:h" opts; do
         ;;
     g)
         start_graaljs_service=${OPTARG}
+        ;;
+    d)
+        start_dummy_service=${OPTARG}
         ;;
     h)
         usage
@@ -302,5 +307,27 @@ if [[ "$start_graaljs_service" == "true" ]]; then
         fi
     else
         echo "WARNING: GraalJS sidecar JAR not found. Skipping."
+    fi
+fi
+
+# Start dummy latency service if enabled (Python HTTP service on port 3500)
+if [[ "$start_dummy_service" == "true" ]]; then
+    echo ""
+    echo "Starting dummy latency service (HTTP on port 3500)..."
+    echo "-------------------------------------------"
+    dummy_script="/home/ubuntu/resources/dummy_service.py"
+    if [[ -f "$dummy_script" ]]; then
+        nohup python3 "$dummy_script" > /home/ubuntu/dummy-service.log 2>&1 &
+        DUMMY_PID=$!
+        echo "Dummy service started with PID: $DUMMY_PID"
+        echo "$DUMMY_PID" > /home/ubuntu/dummy-service.pid
+        sleep 3s
+        if kill -0 "$DUMMY_PID" 2>/dev/null; then
+            echo "Dummy latency service is running on localhost:3500."
+        else
+            echo "WARNING: Dummy latency service failed to start. Check /home/ubuntu/dummy-service.log"
+        fi
+    else
+        echo "WARNING: dummy_service.py not found at $dummy_script. Skipping."
     fi
 fi

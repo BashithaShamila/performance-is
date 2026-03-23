@@ -120,3 +120,32 @@ if [[ -f "$graaljs_pid_file" ]]; then
         echo "WARNING: GraalJS sidecar JAR not found in /home/ubuntu/. Skipping restart."
     fi
 fi
+
+# Ensure dummy latency service is still running (not killed by 'killall java', but check anyway).
+dummy_pid_file="/home/ubuntu/dummy-service.pid"
+dummy_log_file="/home/ubuntu/dummy-service.log"
+dummy_script="/home/ubuntu/resources/dummy_service.py"
+if [[ -f "$dummy_pid_file" ]]; then
+    DUMMY_PID=$(cat "$dummy_pid_file")
+    if kill -0 "$DUMMY_PID" 2>/dev/null; then
+        echo "Dummy latency service is still running (PID: $DUMMY_PID). No restart needed."
+    else
+        echo ""
+        echo "Restarting dummy latency service (process died)..."
+        echo "-------------------------------------------"
+        if [[ -f "$dummy_script" ]]; then
+            nohup python3 "$dummy_script" > "$dummy_log_file" 2>&1 &
+            DUMMY_PID=$!
+            echo "$DUMMY_PID" > "$dummy_pid_file"
+            echo "Dummy service started with PID: $DUMMY_PID"
+            sleep 3s
+            if kill -0 "$DUMMY_PID" 2>/dev/null; then
+                echo "Dummy latency service is running on localhost:3500."
+            else
+                echo "WARNING: Dummy latency service failed to start. Check $dummy_log_file"
+            fi
+        else
+            echo "WARNING: dummy_service.py not found at $dummy_script. Skipping restart."
+        fi
+    fi
+fi

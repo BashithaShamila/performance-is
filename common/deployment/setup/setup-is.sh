@@ -36,12 +36,14 @@ function usage() {
     echo "-m: Database type."
     echo "-c: Case insensitivity of the username and attributes."
     echo "-g: Start external GraalJS microservice for adaptive scripting (true/false)."
+    echo "-d: Start dummy latency service on the IS node (true/false)."
     echo ""
 }
 
 start_graaljs_service=false
+start_dummy_service=false
 
-while getopts "a:n:w:i:j:k:r:s:t:m:c:g:h" opts; do
+while getopts "a:n:w:i:j:k:r:s:t:m:c:g:d:h" opts; do
     case $opts in
     a)
         is_host_alias=${OPTARG}
@@ -78,6 +80,9 @@ while getopts "a:n:w:i:j:k:r:s:t:m:c:g:h" opts; do
         ;;
     g)
         start_graaljs_service=${OPTARG}
+        ;;
+    d)
+        start_dummy_service=${OPTARG}
         ;;
     h)
         usage
@@ -144,16 +149,16 @@ setup_is_node_command=""
 
 if [[ $no_of_nodes -eq 1 ]]; then
     setup_is_node_command="ssh -i ~/private_key.pem -o "StrictHostKeyChecking=no" -t ubuntu@$wso2_is_1_ip \
-      ./update-is-conf.sh -n $no_of_nodes -c $is_case_insensitive_username_and_attributes -r $db_instance_ip -m $db_type -t $keystore_type -s $session_db_instance_ip -g $start_graaljs_service"
+      ./update-is-conf.sh -n $no_of_nodes -c $is_case_insensitive_username_and_attributes -r $db_instance_ip -m $db_type -t $keystore_type -s $session_db_instance_ip -g $start_graaljs_service -d $start_dummy_service"
 elif [[ $no_of_nodes -eq 2 ]]; then
     setup_is_node_command="ssh -i ~/private_key.pem -o "StrictHostKeyChecking=no" -t ubuntu@$wso2_is_1_ip \
-      ./update-is-conf.sh -n $no_of_nodes -c $is_case_insensitive_username_and_attributes -r $db_instance_ip -m $db_type -t $keystore_type -s $session_db_instance_ip -w $wso2_is_1_ip -i $wso2_is_2_ip -g $start_graaljs_service"
+      ./update-is-conf.sh -n $no_of_nodes -c $is_case_insensitive_username_and_attributes -r $db_instance_ip -m $db_type -t $keystore_type -s $session_db_instance_ip -w $wso2_is_1_ip -i $wso2_is_2_ip -g $start_graaljs_service -d $start_dummy_service"
 elif [[ $no_of_nodes -eq 3 ]]; then
     setup_is_node_command="ssh -i ~/private_key.pem -o "StrictHostKeyChecking=no" -t ubuntu@$wso2_is_1_ip \
-      ./update-is-conf.sh -n $no_of_nodes -c $is_case_insensitive_username_and_attributes -r $db_instance_ip -m $db_type -t $keystore_type -s $session_db_instance_ip -w $wso2_is_1_ip -i $wso2_is_2_ip -j $wso2_is_3_ip -g $start_graaljs_service"
+      ./update-is-conf.sh -n $no_of_nodes -c $is_case_insensitive_username_and_attributes -r $db_instance_ip -m $db_type -t $keystore_type -s $session_db_instance_ip -w $wso2_is_1_ip -i $wso2_is_2_ip -j $wso2_is_3_ip -g $start_graaljs_service -d $start_dummy_service"
 elif [[ $no_of_nodes -eq 4 ]]; then
     setup_is_node_command="ssh -i ~/private_key.pem -o "StrictHostKeyChecking=no" -t ubuntu@$wso2_is_1_ip \
-      ./update-is-conf.sh -n $no_of_nodes -c $is_case_insensitive_username_and_attributes -r $db_instance_ip -m $db_type -t $keystore_type -s $session_db_instance_ip -w $wso2_is_1_ip -i $wso2_is_2_ip -j $wso2_is_3_ip -k $wso2_is_4_ip -g $start_graaljs_service"
+      ./update-is-conf.sh -n $no_of_nodes -c $is_case_insensitive_username_and_attributes -r $db_instance_ip -m $db_type -t $keystore_type -s $session_db_instance_ip -w $wso2_is_1_ip -i $wso2_is_2_ip -j $wso2_is_3_ip -k $wso2_is_4_ip -g $start_graaljs_service -d $start_dummy_service"
 else
     echo "Invalid value for no_of_nodes. Please provide a valid number."
     exit 1
