@@ -1,7 +1,12 @@
 import json
 import time
 import random
-from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
+import socketserver
+from http.server import HTTPServer, BaseHTTPRequestHandler
+
+# Python 3.6 compatible threading server (ThreadingHTTPServer requires 3.7+)
+class ThreadingHTTPServer(socketserver.ThreadingMixIn, HTTPServer):
+    daemon_threads = True
 
 ENTITLEMENTS = json.dumps([
     {"entitlement_id": f"urn:wso2:entitlement:req-{random.randint(1000,9999)}-{i}",
