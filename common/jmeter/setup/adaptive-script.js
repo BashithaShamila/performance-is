@@ -1,77 +1,86 @@
-var DUMMY_SERVICE_URL = "http://localhost:3500";
+var DUMMY_URL = 'http://localhost:3500';
 
 var onLoginRequest = function(context) {
     executeStep(1, {
-        onSuccess: function (context) {
-            // BOUNDARY 1
-            var initialUser = context.currentKnownSubject;
-            Log.info("[PERF-TEST] [HOP 0] Starting Automated Flow for user: " + initialUser.username);
+        onSuccess: function(context) {
+            var user = context.currentKnownSubject;
 
-            httpPost(DUMMY_SERVICE_URL + "/dummyCreate", 
-                {"username": initialUser.username}, 
-                {"Accept": "application/json"}, 
+            // --- Phase 1: Read local claims ---
+            var username = user.localClaims['http://wso2.org/claims/username'];
+            var givenname = user.localClaims['http://wso2.org/claims/givenname'];
+            var lastname = user.localClaims['http://wso2.org/claims/lastname'];
+
+            // --- Phase 2: User lookups ---
+            var byUsername = getUniqueUserWithClaimValues(
+                {'http://wso2.org/claims/username': username}, context);
+            var byGivenname = getUniqueUserWithClaimValues(
+                {'http://wso2.org/claims/givenname': givenname}, context);
+            var byLastname = getUniqueUserWithClaimValues(
+                {'http://wso2.org/claims/lastname': lastname}, context);
+            var byUsernameCheck = getUniqueUserWithClaimValues(
+                {'http://wso2.org/claims/username': username}, context);
+
+            // --- Phase 3: Async httpPost chain ---
+
+            httpPost(DUMMY_URL + '/dummyCreate',
+                { action: "createUser" },
+                {"Content-Type": "application/json"},
                 {
-                    onSuccess: function(context, createResponse) {
-                        // BOUNDARY 2
-                        var step1User = context.currentKnownSubject;
-                        
-                        // LOG FULL PAYLOAD 1 (Safe Java Map concatenation)
-                        Log.info("[PERF-TEST] [HOP 1] /dummyCreate FULL response: \n" + createResponse);
-                        
-                        var extId = createResponse.id;
-                        step1User.localClaims["http://wso2.org/claims/externalid"] = extId;
-                        Log.info("[PERF-TEST] [HOP 1] Stashed external ID in localClaims for: " + step1User.username);
-                        
-                        // ASYNC YIELD (Replacing prompt)
-                        Log.info("[PERF-TEST] [HOP 2] Initiating artificial polling delay...");
-                        httpPost(DUMMY_SERVICE_URL + "/dummyCreate", 
-                            {"username": step1User.username, "action": "polling_delay"}, 
-                            {"Accept": "application/json"}, 
+                    onSuccess: function(context, data) {
+                        var user = context.currentKnownSubject;
+
+                        // ✅ FIX: handle both string and object
+                        var resp = (typeof data === "string") ? JSON.parse(data) : data;
+
+                        user.localClaims['http://wso2.org/claims/externalid'] = resp.id;
+
+                        httpPost(DUMMY_URL + '/dummyClaims',
+                            { action: "getNorthStarClaims" },
+                            {"Content-Type": "application/json"},
                             {
-                                onSuccess: function(context, waitResponse) {
-                                    // BOUNDARY 3
-                                    var step2User = context.currentKnownSubject;
-                                    var step2Username = step2User.username; 
-                                    
-                                    // LOG FULL PAYLOAD 2 (Safe Java Map concatenation)
-                                    Log.info("[PERF-TEST] [HOP 2] Polling delay completed. FULL response: \n" + waitResponse);
-                                    
-                                    Log.info("[PERF-TEST] [HOP 3] Fetching massive claims payload...");
-                                    httpPost(DUMMY_SERVICE_URL + "/dummyClaims", 
-                                        {"username": step2Username}, 
-                                        {"Accept": "application/json"}, 
+                                onSuccess: function(context, data) {
+                                    var user = context.currentKnownSubject;
+
+                                    // ✅ FIX: handle both string and object
+                                    var c = (typeof data === "string") ? JSON.parse(data) : data;
+
+                                    user.localClaims['http://wso2.org/claims/groups'] = c.groups;
+                                    user.localClaims['http://wso2.org/claims/organization'] = c.organization;
+
+                                    user.localClaims['http://wso2.org/claims/entitlements'] = c.entitlements;
+                                    user.localClaims['http://wso2.org/claims/givenname'] = 'PerfTestFirst';
+                                    user.localClaims['http://wso2.org/claims/lastname'] = 'PerfTestLast';
+                                    user.localClaims['http://wso2.org/claims/emailaddress'] = 'perf@test.com';
+                                    user.localClaims['http://wso2.org/claims/country'] = 'US';
+                                    user.localClaims['http://wso2.org/claims/im'] = 'DEPT-100';
+                                    user.localClaims['http://wso2.org/claims/nickname'] = 'DIV-NORTH';
+                                    user.localClaims['http://wso2.org/claims/role'] = 'perf_test_user';
+                                    user.localClaims['http://wso2.org/claims/telephone'] = '+1234567890';
+                                    user.localClaims['http://wso2.org/claims/url'] = 'ORG-GUID-9988776655';
+                                    user.localClaims['http://wso2.org/claims/stateorprovince'] = 'WEST';
+
+                                    httpPost(DUMMY_URL + '/dummyCreate',
+                                        { action: "assignEntitlements" },
+                                        {"Content-Type": "application/json"},
                                         {
-                                            onSuccess: function(context, claimData) {
-                                                // BOUNDARY 4
-                                                var finalUser = context.currentKnownSubject;
-                                                
-                                                // LOG FULL PAYLOAD 3 (The massive one - Safe Java Map concatenation)
-                                                Log.info("[PERF-TEST] [HOP 3] /dummyClaims FULL massive payload received: \n" + claimData);
-                                                
-                                                // Apply massive payload
-                                                finalUser.localClaims["http://wso2.org/claims/entitlements"] = claimData.entitlements;
-                                                finalUser.localClaims["http://wso2.org/claims/organization"] = claimData.organization;
-                                                finalUser.localClaims["http://wso2.org/claims/groups"] = claimData.groups;
-                                                
-                                                Log.info("[PERF-TEST] [DONE] Completed automated multi-stage pipeline successfully for: " + finalUser.username);
+                                            onSuccess: function(context, data) {
                                             },
                                             onFail: function(context, data) {
-                                                Log.error("[PERF-TEST] [ERROR] Dummy claims fetch failed");
-                                                sendError(DUMMY_SERVICE_URL, {'statusMsg': 'Claims fetch failed'});
                                             }
-                                        });
+                                        }
+                                    );
                                 },
                                 onFail: function(context, data) {
-                                    Log.error("[PERF-TEST] [ERROR] Dummy wait simulation failed");
-                                    sendError(DUMMY_SERVICE_URL, {'statusMsg': 'Wait state failed'});
                                 }
-                            });
+                            }
+                        );
                     },
                     onFail: function(context, data) {
-                        Log.error("[PERF-TEST] [ERROR] Dummy user creation failed");
-                        sendError(DUMMY_SERVICE_URL, {'statusMsg': 'Creation service unreachable'});
                     }
-                });
+                }
+            );
+        },
+        onFail: function(context) {
         }
     });
 };
