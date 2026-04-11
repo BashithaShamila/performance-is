@@ -285,6 +285,20 @@ if [[ $db_type == "mysql" ]]; then
     sed -i "s|defaultAutoCommit=true|defaultAutoCommit=false|g" "$carbon_home/repository/conf/deployment.toml" || echo "Editing deployment.toml file failed!"
 fi
 
+# Inject remote GraalJS engine config into deployment.toml if sidecar is enabled
+if [[ "$start_graaljs_service" == "true" ]]; then
+    echo ""
+    echo "Configuring IS to use remote GraalJS engine (gRPC on localhost:50051)..."
+    echo "-------------------------------------------"
+    cat >> "$carbon_home"/repository/conf/deployment.toml << 'GRAALJS_EOF'
+
+[authentication.adaptive.graaljs]
+engine_mode = "REMOTE"
+grpc_target = "localhost:50051"
+remote_engine_tracing = false
+GRAALJS_EOF
+fi
+
 ./wso2is/bin/wso2server.sh start
 sleep 60s
 
