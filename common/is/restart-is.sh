@@ -104,7 +104,7 @@ if [[ -f "$graaljs_pid_file" ]]; then
     echo ""
     echo "Restarting external GraalJS sidecar (killed by 'killall java')..."
     echo "-------------------------------------------"
-    graaljs_jar=$(ls /home/ubuntu/graaljs-sidecar-*.jar 2>/dev/null | head -1)
+    graaljs_jar=$(ls /home/ubuntu/graaljs-External-*.jar 2>/dev/null | head -1)
     if [[ -n "$graaljs_jar" ]]; then
         nohup java -jar "$graaljs_jar" grpc 50051 > "$graaljs_log_file" 2>&1 &
         GRAALJS_PID=$!

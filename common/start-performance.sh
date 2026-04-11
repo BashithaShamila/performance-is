@@ -44,7 +44,7 @@ enable_high_concurrency=false
 use_db_snapshot=false
 db_snapshot_id=""
 enable_graaljs_sidecar=true
-graaljs_sidecar_url="${GRAALJS_SIDECAR_URL:-https://github.com/BashithaShamila/external-graaljs/releases/download/v1.0.1-SNAPSHOT/graaljs-sidecar-1.0.0-SNAPSHOT.jar}"
+graaljs_sidecar_url="${GRAALJS_SIDECAR_URL:-https://github.com/BashithaShamila/external-graaljs/releases/download/v1.0.2-SNAPSHOT/graaljs-External-1.0.0-SNAPSHOT.jar}"
 enable_dummy_service=true
 
 results_dir="$PWD/results-$timestamp"
@@ -466,8 +466,8 @@ if [[ "$enable_graaljs_sidecar" == "true" ]]; then
     echo ""
     echo "Downloading GraalJS sidecar JAR from $graaljs_sidecar_url..."
     echo "============================================"
-    wget -q -O /tmp/graaljs-sidecar.jar "$graaljs_sidecar_url"
-    scp_bastion_cmd "/tmp/graaljs-sidecar.jar" "/home/ubuntu/graaljs-sidecar-1.0.0.jar"
+    wget -q -O /tmp/graaljs-External.jar "$graaljs_sidecar_url"
+    scp_bastion_cmd "/tmp/graaljs-External.jar" "/home/ubuntu/graaljs-External-1.0.0.jar"
 fi
 
 echo ""

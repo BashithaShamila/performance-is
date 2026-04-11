@@ -132,11 +132,11 @@ sudo -u ubuntu scp mssql-jdbc-*.jar "$is_host_alias":/home/ubuntu/
 sudo -u ubuntu scp postgresql-*.jar "$is_host_alias":/home/ubuntu/
 
 # Copy GraalJS sidecar JAR if present (for adaptive scripting with updated pack)
-if [[ "$start_graaljs_service" == "true" ]] && ls graaljs-sidecar-*.jar 1>/dev/null 2>&1; then
+if [[ "$start_graaljs_service" == "true" ]] && ls graaljs-External-*.jar 1>/dev/null 2>&1; then
     echo ""
     echo "Copying GraalJS sidecar JAR..."
     echo "-------------------------------------------"
-    sudo -u ubuntu scp graaljs-sidecar-*.jar "$is_host_alias":/home/ubuntu/
+    sudo -u ubuntu scp graaljs-External-*.jar "$is_host_alias":/home/ubuntu/
 fi
 
 sudo -u ubuntu ssh "$is_host_alias" mkdir sar setup

@@ -294,8 +294,8 @@ if [[ "$start_graaljs_service" == "true" ]]; then
     echo ""
     echo "Starting external GraalJS sidecar (gRPC on port 50051)..."
     echo "-------------------------------------------"
-    if ls graaljs-sidecar-*.jar 1>/dev/null 2>&1; then
-        nohup java -jar graaljs-sidecar-*.jar grpc 50051 > /home/ubuntu/graaljs-microservice.log 2>&1 &
+    if ls graaljs-External-*.jar 1>/dev/null 2>&1; then
+        nohup java -jar graaljs-External-*.jar grpc 50051 > /home/ubuntu/graaljs-microservice.log 2>&1 &
         GRAALJS_PID=$!
         echo "GraalJS sidecar started with PID: $GRAALJS_PID"
         echo "$GRAALJS_PID" > /home/ubuntu/graaljs-microservice.pid
