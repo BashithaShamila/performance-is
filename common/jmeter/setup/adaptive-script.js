@@ -1,34 +1,38 @@
 var COUNTRY_CLAIM = "http://wso2.org/claims/country";
+var EMAIL_CLAIM = "http://wso2.org/claims/emailaddress";
 
 var onLoginRequest = function (context) {
     executeStep(1, {
         onSuccess: function (context) {
             var user = context.currentKnownSubject;
-            var REAL_COUNTRY = "Sri Lanka";
-            
-            // 44 total communications (11 original points * 4)
-            var targetCount = 44;
+            var COUNTRY = "Sri Lanka";
 
-            Log.info("Starting Perf Test: 4x Scaling. Total Round-trips: " + targetCount);
+            // ── Phase 1: getUniqueUserWithClaimValues loop (12 calls) ──────────
+            Log.info("Starting Phase 1: getUniqueUserWithClaimValues x12");
 
-            for (var i = 1; i <= targetCount; i++) {
-                
-                // 1. DATA WRITE: Crossing JS -> Java
-                // We set the real claim value
-                user.localClaims[COUNTRY_CLAIM] = REAL_COUNTRY;
-                
-                // 2. DATA READ: Crossing Java -> JS
-                // We retrieve the real claim value
+            var claimMap = {};
+            claimMap[EMAIL_CLAIM] = user.localClaims[EMAIL_CLAIM];
+
+            for (var g = 1; g <= 12; g++) {
+                var lookedUpUser = getUniqueUserWithClaimValues(claimMap, context);
+                var userId = lookedUpUser.localClaims["http://wso2.org/claims/userid"];
+                Log.info("getUsers[" + g + "] userid: " + userId);
+            }
+
+            Log.info("Phase 1 complete. 12 getUniqueUserWithClaimValues calls done.");
+
+            // ── Phase 2: localClaims read/write loop (2 operations) ──────────
+            Log.info("Starting Phase 2: localClaims access x2");
+
+            for (var i = 1; i <= 2; i++) {
+                user.localClaims[COUNTRY_CLAIM] = COUNTRY;
                 var countryVerification = user.localClaims[COUNTRY_CLAIM];
-                
-                // 3. LOGGING: Bridge Overhead
-                // Log.info also crosses the host boundary to reach the Java logger
                 if (i % 10 === 0 || i === 1) {
                     Log.info("Verified Country at iteration " + i + ": " + countryVerification);
                 }
             }
 
-            Log.info("Perf test complete. 44 operations processed using real claim URIs.");
+            Log.info("Phase 2 complete. 2 localClaims operations done.");
         },
         onFail: function (context) {
             Log.info("Authentication/Test failed.");
