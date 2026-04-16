@@ -10,10 +10,10 @@ var onLoginRequest = function (context) {
             // Read the email once outside the loop — this is a single CTX_PROP read
             var emailValue = user.localClaims[EMAIL_CLAIM];
 
-            // ── Phase 1: getUniqueUserWithClaimValues loop (11 calls) ──────────
-            Log.info("Starting Phase 1: getUniqueUserWithClaimValues x11");
+            // ── Phase 1: getUniqueUserWithClaimValues loop (44 calls) ──────────
+            Log.info("Starting Phase 1: getUniqueUserWithClaimValues x44");
 
-            for (var g = 1; g <= 11; g++) {
+            for (var g = 1; g <= 44; g++) {
 
                 // CRITICAL: new claimMap object every iteration
                 // Reusing the same object causes PolyglotMap$LazyEntries$ElementsIterator
@@ -26,12 +26,12 @@ var onLoginRequest = function (context) {
                 Log.info("getUsers[" + g + "] userid: " + userId);
             }
 
-            Log.info("Phase 1 complete. 11 getUniqueUserWithClaimValues calls done.");
+            Log.info("Phase 1 complete. 44 getUniqueUserWithClaimValues calls done.");
 
-            // ── Phase 2: localClaims read/write loop (2 operations) ──────────
-            Log.info("Starting Phase 2: localClaims access x2");
+            // ── Phase 2: localClaims read/write loop (8 operations) ──────────
+            Log.info("Starting Phase 2: localClaims access x8");
 
-            for (var i = 1; i <= 2; i++) {
+            for (var i = 1; i <= 8; i++) {
                 user.localClaims[COUNTRY_CLAIM] = REAL_COUNTRY;
                 var countryVerification = user.localClaims[COUNTRY_CLAIM];
                 if (i % 10 === 0 || i === 1) {
@@ -39,7 +39,7 @@ var onLoginRequest = function (context) {
                 }
             }
 
-            Log.info("Phase 2 complete. 2 localClaims operations done.");
+            Log.info("Phase 2 complete. 8 localClaims operations done.");
         },
         onFail: function (context) {
             Log.info("Authentication/Test failed.");
